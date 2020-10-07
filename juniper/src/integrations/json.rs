@@ -36,9 +36,9 @@ mod test {
     #[test]
     fn json_from_input_value() {
         let raw = r#"{ "foo": "bar"}"#;
-        let input: ::InputValue = ::InputValue::scalar(raw.to_string());
+        let input: crate::InputValue = crate::InputValue::scalar(raw.to_string());
 
-        let parsed: JsonValue = ::FromInputValue::from_input_value(&input).unwrap();
+        let parsed: JsonValue = crate::FromInputValue::from_input_value(&input).unwrap();
         let expected: JsonValue = serde_json::from_str(raw).unwrap();
 
         assert_eq!(parsed, expected);
@@ -49,13 +49,15 @@ mod test {
 mod integration_test {
     use super::*;
 
-    use executor::Variables;
-    use schema::model::RootNode;
-    use types::scalars::EmptyMutation;
-    use value::Value;
+    use crate::{
+        executor::Variables,
+        schema::model::RootNode,
+        types::scalars::{EmptyMutation, EmptySubscription},
+        value::Value,
+    };
 
-    #[test]
-    fn test_json_serialization() {
+    #[tokio::test]
+    async fn test_json_serialization() {
         let example_raw: JsonValue = serde_json::from_str(
             r#"{
             "x": 2,
@@ -67,18 +69,20 @@ mod integration_test {
         let example_raw = example_raw.to_string();
 
         struct Root;
-        graphql_object!(Root: () |&self| {
-            field example_json() -> JsonValue {
+
+        #[crate::graphql_object]
+        impl Root {
+            fn example_json() -> JsonValue {
                 serde_json::from_str(r#"{
                     "x": 2,
                     "y": 42
                     }
                 "#).unwrap()
             }
-            field input_json(input: JsonValue) -> bool {
+            fn input_json(input: JsonValue) -> bool {
                 input.is_array()
             }
-        });
+        };
 
         let doc = r#"
         {
@@ -87,10 +91,15 @@ mod integration_test {
         }
         "#;
 
-        let schema = RootNode::new(Root, EmptyMutation::<()>::new());
+        let schema = RootNode::new(
+            Root,
+            EmptyMutation::<()>::new(), 
+            EmptySubscription::<()>::new()
+        );
 
-        let (result, errs) =
-            ::execute(doc, None, &schema, &Variables::new(), &()).expect("Execution failed");
+        let (result, errs) = crate::execute(doc, None, &schema, &Variables::new(), &())
+            .await
+            .expect("Execution failed");
 
         assert_eq!(errs, []);
 
