@@ -1,8 +1,10 @@
 use serde_json::Value as JsonValue;
 
-use parser::{ParseError, ScalarToken, Token};
-use value::ParseScalarResult;
-use Value;
+use crate::{
+    parser::{ParseError, ScalarToken, Token},
+    value::{ParseScalarResult, ParseScalarValue},
+    Value,
+};
 
 graphql_scalar!(JsonValue as "JsonString" where Scalar = <S> {
     description: "JSON serialized as a string"
