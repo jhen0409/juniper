@@ -39,7 +39,6 @@ mod test {
 
         assert_eq!(parsed, expected);
     }
-
 }
 
 #[cfg(test)]
