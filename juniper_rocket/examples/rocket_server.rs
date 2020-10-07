@@ -1,51 +1,48 @@
 #![feature(decl_macro, proc_macro_hygiene)]
 
-extern crate juniper;
-extern crate juniper_rocket;
-#[macro_use]
-extern crate rocket;
+use rocket::{response::content, State};
 
-use rocket::response::content;
-use rocket::State;
+use juniper::{
+    tests::fixtures::starwars::schema::{Database, Query},
+    EmptyMutation, EmptySubscription, RootNode,
+};
 
-use juniper::tests::model::Database;
-use juniper::{EmptyMutation, RootNode};
+type Schema = RootNode<'static, Query, EmptyMutation<Database>, EmptySubscription<Database>>;
 
-type Schema = RootNode<'static, Database, EmptyMutation<Database>>;
-
-#[get("/")]
+#[rocket::get("/")]
 fn graphiql() -> content::Html<String> {
-    juniper_rocket::graphiql_source("/graphql")
+    juniper_rocket::graphiql_source("/graphql", None)
 }
 
-#[get("/graphql?<request>")]
+#[rocket::get("/graphql?<request>")]
 fn get_graphql_handler(
     context: State<Database>,
     request: juniper_rocket::GraphQLRequest,
     schema: State<Schema>,
 ) -> juniper_rocket::GraphQLResponse {
-    request.execute(&schema, &context)
+    request.execute_sync(&schema, &context)
 }
 
-#[post("/graphql", data = "<request>")]
+#[rocket::post("/graphql", data = "<request>")]
 fn post_graphql_handler(
     context: State<Database>,
     request: juniper_rocket::GraphQLRequest,
     schema: State<Schema>,
 ) -> juniper_rocket::GraphQLResponse {
-    request.execute(&schema, &context)
+    request.execute_sync(&schema, &context)
 }
 
 fn main() {
     rocket::ignite()
         .manage(Database::new())
         .manage(Schema::new(
-            Database::new(),
+            Query,
             EmptyMutation::<Database>::new(),
+            EmptySubscription::<Database>::new(),
         ))
         .mount(
             "/",
-            routes![graphiql, get_graphql_handler, post_graphql_handler],
+            rocket::routes![graphiql, get_graphql_handler, post_graphql_handler],
         )
         .launch();
 }

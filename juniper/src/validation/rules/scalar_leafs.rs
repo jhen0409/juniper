@@ -1,7 +1,9 @@
-use ast::Field;
-use parser::Spanning;
-use validation::{RuleError, ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::Field,
+    parser::Spanning,
+    validation::{RuleError, ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 pub struct ScalarLeafs;
 
@@ -22,11 +24,11 @@ where
             match (field_type.is_leaf(), &field.item.selection_set) {
                 (true, &Some(_)) => Some(RuleError::new(
                     &no_allowed_error_message(field_name, &format!("{}", field_type_literal)),
-                    &[field.start.clone()],
+                    &[field.start],
                 )),
                 (false, &None) => Some(RuleError::new(
                     &required_error_message(field_name, &format!("{}", field_type_literal)),
-                    &[field.start.clone()],
+                    &[field.start],
                 )),
                 _ => None,
             }
@@ -50,16 +52,19 @@ fn no_allowed_error_message(field_name: &str, type_name: &str) -> String {
 fn required_error_message(field_name: &str, type_name: &str) -> String {
     format!(
         r#"Field "{}" of type "{}" must have a selection of subfields. Did you mean "{} {{ ... }}"?"#,
-        field_name, type_name, field_name)
+        field_name, type_name, field_name
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{factory, no_allowed_error_message, required_error_message};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn valid_scalar_selection() {
@@ -196,5 +201,4 @@ mod tests {
             )],
         );
     }
-
 }

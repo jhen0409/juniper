@@ -1,6 +1,35 @@
 # master
 
-- No changes yet
+- Compatibility with the latest `juniper`.
+
+## Breaking Changes
+
+- `juniper_iron::GraphiQLHandler::new` now requires a second parameter for subscriptions.
+- `400 Bad Request` is now returned if POST HTTP request contains no or invalid `Content-Type` header.
+
+# [[0.6.2] 2019-12-16](https://github.com/graphql-rust/juniper/releases/tag/juniper_iron-0.6.2)
+
+- Compatibility with the latest `juniper`.
+
+# [[0.6.1] 2019-10-24](https://github.com/graphql-rust/juniper/releases/tag/juniper_iron-0.6.1)
+
+- Compatibility with the latest `juniper`.
+
+# [[0.6.0] 2019-09-29](https://github.com/graphql-rust/juniper/releases/tag/juniper_iron-0.6.0)
+
+- Compatibility with the latest `juniper`.
+
+# [[0.5.1] 2019-07-29](https://github.com/graphql-rust/juniper/releases/tag/juniper_iron-0.5.1)
+
+- Compatibility with the latest `juniper`.
+
+# [[0.5.0] 2019-07-19](https://github.com/graphql-rust/juniper/releases/tag/juniper_iron-0.5.0)
+
+- Compatibility with the latest `juniper`.
+
+# [[0.4.0] 2019-05-16](https://github.com/graphql-rust/juniper/releases/tag/juniper_iron-0.4.0)
+
+- Compatibility with the latest `juniper`.
 
 # [0.3.0] 2018-12-17
 

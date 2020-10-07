@@ -1,8 +1,10 @@
-use ast::{Fragment, InlineFragment, VariableDefinition};
-use parser::{SourcePosition, Spanning};
+use crate::{
+    ast::{Fragment, InlineFragment, VariableDefinition},
+    parser::{SourcePosition, Spanning},
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 use std::fmt::Debug;
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
 
 pub struct KnownTypeNames;
 
@@ -49,7 +51,7 @@ fn validate_type<'a, S: Debug>(
     location: &SourcePosition,
 ) {
     if ctx.schema.type_by_name(type_name).is_none() {
-        ctx.report_error(&error_message(type_name), &[location.clone()]);
+        ctx.report_error(&error_message(type_name), &[*location]);
     }
 }
 
@@ -61,9 +63,11 @@ fn error_message(type_name: &str) -> String {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn known_type_names_are_valid() {

@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use ast::{Definition, Document, Fragment, FragmentSpread, Operation};
-use parser::Spanning;
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::{Definition, Document, Fragment, FragmentSpread, Operation},
+    parser::Spanning,
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Scope<'a> {
@@ -63,7 +65,7 @@ where
 
         for fragment in &self.defined_fragments {
             if !reachable.contains(&fragment.item) {
-                ctx.report_error(&error_message(fragment.item), &[fragment.start.clone()]);
+                ctx.report_error(&error_message(fragment.item), &[fragment.start]);
             }
         }
     }
@@ -73,7 +75,7 @@ where
         _: &mut ValidatorContext<'a, S>,
         op: &'a Spanning<Operation<S>>,
     ) {
-        let op_name = op.item.name.as_ref().map(|s| s.item.as_ref());
+        let op_name = op.item.name.as_ref().map(|s| s.item);
         self.current_scope = Some(Scope::Operation(op_name));
     }
 
@@ -109,9 +111,11 @@ fn error_message(frag_name: &str) -> String {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn all_fragment_names_are_used() {

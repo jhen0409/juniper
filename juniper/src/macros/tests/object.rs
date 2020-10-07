@@ -1,12 +1,17 @@
-use std::marker::PhantomData;
-
-use ast::InputValue;
-use executor::{Context, FieldResult};
-use schema::model::RootNode;
-use types::scalars::EmptyMutation;
-use value::{DefaultScalarValue, Object, Value};
+// TODO: make sure proc macro tests cover all
+//       variants of the below
 
 /*
+use std::marker::PhantomData;
+
+use crate::{
+    ast::InputValue,
+    executor::{Context, FieldResult},
+    schema::model::RootNode,
+    types::scalars::{EmptyMutation, EmptySubscription},
+    value::{DefaultScalarValue, Object, Value},
+};
+
 
 Syntax to validate:
 
@@ -18,41 +23,30 @@ Syntax to validate:
 
  */
 
-struct Interface;
-
+/*
 struct CustomName;
+graphql_object!(CustomName: () as "ACustomNamedType" |&self| {
+    field simple() -> i32 { 0 }
+});
 
 #[allow(dead_code)]
 struct WithLifetime<'a> {
     data: PhantomData<&'a i32>,
 }
+graphql_object!(<'a> WithLifetime<'a>: () as "WithLifetime" |&self| {
+    field simple() -> i32 { 0 }
+});
 
 #[allow(dead_code)]
 struct WithGenerics<T> {
     data: T,
 }
-
-struct DescriptionFirst;
-struct FieldsFirst;
-struct InterfacesFirst;
-
-struct CommasWithTrailing;
-struct CommasOnMeta;
-
-struct Root;
-
-graphql_object!(CustomName: () as "ACustomNamedType" |&self| {
-    field simple() -> i32 { 0 }
-});
-
-graphql_object!(<'a> WithLifetime<'a>: () as "WithLifetime" |&self| {
-    field simple() -> i32 { 0 }
-});
-
 graphql_object!(<T> WithGenerics<T>: () as "WithGenerics" |&self| {
     field simple() -> i32 { 0 }
 });
 
+struct Interface;
+struct DescriptionFirst;
 graphql_interface!(Interface: () |&self| {
     field simple() -> i32 { 0 }
 
@@ -60,7 +54,6 @@ graphql_interface!(Interface: () |&self| {
         DescriptionFirst => Some(DescriptionFirst {}),
     }
 });
-
 graphql_object!(DescriptionFirst: () |&self| {
     description: "A description"
 
@@ -69,6 +62,7 @@ graphql_object!(DescriptionFirst: () |&self| {
     interfaces: [Interface]
 });
 
+struct FieldsFirst;
 graphql_object!(FieldsFirst: () |&self| {
     field simple() -> i32 { 0 }
 
@@ -77,6 +71,7 @@ graphql_object!(FieldsFirst: () |&self| {
     interfaces: [Interface]
 });
 
+struct InterfacesFirst;
 graphql_object!(InterfacesFirst: ()|&self| {
     interfaces: [Interface]
 
@@ -85,6 +80,7 @@ graphql_object!(InterfacesFirst: ()|&self| {
     description: "A description"
 });
 
+struct CommasWithTrailing;
 graphql_object!(CommasWithTrailing: () |&self| {
     interfaces: [Interface],
 
@@ -93,12 +89,15 @@ graphql_object!(CommasWithTrailing: () |&self| {
     description: "A description",
 });
 
+struct CommasOnMeta;
 graphql_object!(CommasOnMeta: () |&self| {
     interfaces: [Interface],
     description: "A description",
 
     field simple() -> i32 { 0 }
 });
+
+struct Root;
 
 struct InnerContext;
 impl Context for InnerContext {}
@@ -168,13 +167,17 @@ where
         }
     }
     "#;
-    let schema = RootNode::new(Root {}, EmptyMutation::<InnerContext>::new());
+    let schema = RootNode::new(
+        Root {},
+        EmptyMutation::<InnerContext>::new(),
+        EmptySubscription::<()>::new(),
+    );
     let vars = vec![("typeName".to_owned(), InputValue::scalar(type_name))]
         .into_iter()
         .collect();
 
     let (result, errs) =
-        ::execute(doc, None, &schema, &vars, &InnerContext).expect("Execution failed");
+        crate::execute_sync(doc, None, &schema, &vars, &InnerContext).expect("Execution failed");
 
     assert_eq!(errs, []);
 
@@ -453,3 +456,4 @@ fn introspect_ctx_switch() {
         })));
     });
 }
+*/

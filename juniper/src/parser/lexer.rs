@@ -1,10 +1,11 @@
-use std::char;
-use std::fmt;
-use std::iter::{Iterator, Peekable};
-use std::result::Result;
-use std::str::CharIndices;
+use std::{
+    char, fmt,
+    iter::{Iterator, Peekable},
+    result::Result,
+    str::CharIndices,
+};
 
-use parser::{SourcePosition, Spanning};
+use crate::parser::{SourcePosition, Spanning};
 
 #[doc(hidden)]
 #[derive(Debug)]
@@ -100,7 +101,7 @@ impl<'a> Lexer<'a> {
     pub fn new(source: &'a str) -> Lexer<'a> {
         Lexer {
             iterator: source.char_indices().peekable(),
-            source: source,
+            source,
             length: source.len(),
             position: SourcePosition::new_origin(),
             has_reached_eof: false,
@@ -134,7 +135,7 @@ impl<'a> Lexer<'a> {
     fn emit_single_char(&mut self, t: Token<'a>) -> Spanning<Token<'a>> {
         assert!(self.position.index() <= self.length);
 
-        let start_pos = self.position.clone();
+        let start_pos = self.position;
 
         self.next_char()
             .expect("Internal error in GraphQL lexer: emit_single_char reached EOF");
@@ -166,13 +167,12 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_ellipsis(&mut self) -> LexerResult<'a> {
-        let start_pos = self.position.clone();
+        let start_pos = self.position;
 
         for _ in 0..3 {
-            let (_, ch) = self.next_char().ok_or(Spanning::zero_width(
-                &self.position,
-                LexerError::UnexpectedEndOfFile,
-            ))?;
+            let (_, ch) = self.next_char().ok_or_else(|| {
+                Spanning::zero_width(&self.position, LexerError::UnexpectedEndOfFile)
+            })?;
             if ch != '.' {
                 return Err(Spanning::zero_width(
                     &start_pos,
@@ -190,10 +190,9 @@ impl<'a> Lexer<'a> {
 
     fn scan_name(&mut self) -> LexerResult<'a> {
         let start_pos = self.position;
-        let (start_idx, start_ch) = self.next_char().ok_or(Spanning::zero_width(
-            &self.position,
-            LexerError::UnexpectedEndOfFile,
-        ))?;
+        let (start_idx, start_ch) = self
+            .next_char()
+            .ok_or_else(|| Spanning::zero_width(&self.position, LexerError::UnexpectedEndOfFile))?;
         assert!(is_name_start(start_ch));
 
         let mut end_idx = start_idx;
@@ -210,16 +209,15 @@ impl<'a> Lexer<'a> {
         Ok(Spanning::start_end(
             &start_pos,
             &self.position,
-            Token::Name(&self.source[start_idx..end_idx + 1]),
+            Token::Name(&self.source[start_idx..=end_idx]),
         ))
     }
 
     fn scan_string(&mut self) -> LexerResult<'a> {
         let start_pos = self.position;
-        let (start_idx, start_ch) = self.next_char().ok_or(Spanning::zero_width(
-            &self.position,
-            LexerError::UnexpectedEndOfFile,
-        ))?;
+        let (start_idx, start_ch) = self
+            .next_char()
+            .ok_or_else(|| Spanning::zero_width(&self.position, LexerError::UnexpectedEndOfFile))?;
         if start_ch != '"' {
             return Err(Spanning::zero_width(
                 &self.position,
@@ -279,18 +277,16 @@ impl<'a> Lexer<'a> {
         &mut self,
         start_pos: &SourcePosition,
     ) -> Result<(), Spanning<LexerError>> {
-        let (start_idx, _) = self.peek_char().ok_or(Spanning::zero_width(
-            &self.position,
-            LexerError::UnterminatedString,
-        ))?;
+        let (start_idx, _) = self
+            .peek_char()
+            .ok_or_else(|| Spanning::zero_width(&self.position, LexerError::UnterminatedString))?;
         let mut end_idx = start_idx;
         let mut len = 0;
 
         for _ in 0..4 {
-            let (idx, ch) = self.next_char().ok_or(Spanning::zero_width(
-                &self.position,
-                LexerError::UnterminatedString,
-            ))?;
+            let (idx, ch) = self.next_char().ok_or_else(|| {
+                Spanning::zero_width(&self.position, LexerError::UnterminatedString)
+            })?;
 
             if !ch.is_alphanumeric() {
                 break;
@@ -300,7 +296,11 @@ impl<'a> Lexer<'a> {
             len += 1;
         }
 
-        let escape = &self.source[start_idx..end_idx + 1];
+        // Make sure we are on a valid char boundary.
+        let escape = &self
+            .source
+            .get(start_idx..=end_idx)
+            .ok_or_else(|| Spanning::zero_width(&self.position, LexerError::UnterminatedString))?;
 
         if len != 4 {
             return Err(Spanning::zero_width(
@@ -328,10 +328,9 @@ impl<'a> Lexer<'a> {
 
     fn scan_number(&mut self) -> LexerResult<'a> {
         let start_pos = self.position;
-        let (start_idx, _) = self.peek_char().ok_or(Spanning::zero_width(
-            &self.position,
-            LexerError::UnexpectedEndOfFile,
-        ))?;
+        let (start_idx, _) = self
+            .peek_char()
+            .ok_or_else(|| Spanning::zero_width(&self.position, LexerError::UnexpectedEndOfFile))?;
 
         let mut last_idx = start_idx;
         let mut last_char = '1';
@@ -542,3 +541,5 @@ impl fmt::Display for LexerError {
         }
     }
 }
+
+impl std::error::Error for LexerError {}

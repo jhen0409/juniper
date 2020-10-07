@@ -1,10 +1,12 @@
-use ast::{
-    Directive, Document, Field, Fragment, FragmentSpread, InlineFragment, InputValue, Operation,
-    Selection, VariableDefinition,
+use crate::{
+    ast::{
+        Directive, Document, Field, Fragment, FragmentSpread, InlineFragment, InputValue,
+        Operation, Selection, VariableDefinition,
+    },
+    parser::Spanning,
+    validation::ValidatorContext,
+    value::ScalarValue,
 };
-use parser::Spanning;
-use validation::ValidatorContext;
-use value::ScalarValue;
 
 #[doc(hidden)]
 pub trait Visitor<'a, S>
@@ -69,8 +71,8 @@ where
     ) {
     }
 
-    fn enter_selection_set(&mut self, _: &mut ValidatorContext<'a, S>, _: &'a Vec<Selection<S>>) {}
-    fn exit_selection_set(&mut self, _: &mut ValidatorContext<'a, S>, _: &'a Vec<Selection<S>>) {}
+    fn enter_selection_set(&mut self, _: &mut ValidatorContext<'a, S>, _: &'a [Selection<S>]) {}
+    fn exit_selection_set(&mut self, _: &mut ValidatorContext<'a, S>, _: &'a [Selection<S>]) {}
 
     fn enter_field(&mut self, _: &mut ValidatorContext<'a, S>, _: &'a Spanning<Field<S>>) {}
     fn exit_field(&mut self, _: &mut ValidatorContext<'a, S>, _: &'a Spanning<Field<S>>) {}

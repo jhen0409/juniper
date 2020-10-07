@@ -1,9 +1,11 @@
 use std::collections::hash_map::{Entry, HashMap};
 
-use ast::{Operation, VariableDefinition};
-use parser::{SourcePosition, Spanning};
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::{Operation, VariableDefinition},
+    parser::{SourcePosition, Spanning},
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 pub struct UniqueVariableNames<'a> {
     names: HashMap<&'a str, SourcePosition>,
@@ -34,13 +36,10 @@ where
     ) {
         match self.names.entry(var_name.item) {
             Entry::Occupied(e) => {
-                ctx.report_error(
-                    &error_message(var_name.item),
-                    &[e.get().clone(), var_name.start.clone()],
-                );
+                ctx.report_error(&error_message(var_name.item), &[*e.get(), var_name.start]);
             }
             Entry::Vacant(e) => {
-                e.insert(var_name.start.clone());
+                e.insert(var_name.start);
             }
         }
     }
@@ -54,9 +53,11 @@ fn error_message(var_name: &str) -> String {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn unique_variable_names() {

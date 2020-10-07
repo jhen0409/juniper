@@ -1,4 +1,4 @@
-use parser::{Lexer, LexerError, ScalarToken, SourcePosition, Spanning, Token};
+use crate::parser::{Lexer, LexerError, ScalarToken, SourcePosition, Spanning, Token};
 
 fn tokenize_to_vec<'a>(s: &'a str) -> Vec<Spanning<Token<'a>>> {
     let mut tokens = Vec::new();
@@ -319,6 +319,15 @@ fn string_errors() {
         tokenize_error(r#""unterminated \"#),
         Spanning::zero_width(
             &SourcePosition::new(15, 0, 15),
+            LexerError::UnterminatedString
+        )
+    );
+
+    // Found by fuzzing.
+    assert_eq!(
+        tokenize_error(r#""\uɠ^A"#),
+        Spanning::zero_width(
+            &SourcePosition::new(5, 0, 5),
             LexerError::UnterminatedString
         )
     );

@@ -1,8 +1,10 @@
-use ast::Field;
-use parser::Spanning;
-use schema::meta::MetaType;
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::Field,
+    parser::Spanning,
+    schema::meta::MetaType,
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 pub struct FieldsOnCorrectType;
 
@@ -25,21 +27,18 @@ where
                 let type_name = parent_type.name().unwrap_or("<unknown>");
 
                 if parent_type.field_by_name(field_name.item).is_none() {
-                    match *parent_type {
-                        MetaType::Union(..) => {
-                            // You can query for `__typename` on a union,
-                            // but it isn't a field on the union...it is
-                            // instead on the resulting object returned.
-                            if field_name.item == "__typename" {
-                                return;
-                            }
+                    if let MetaType::Union(..) = *parent_type {
+                        // You can query for `__typename` on a union,
+                        // but it isn't a field on the union...it is
+                        // instead on the resulting object returned.
+                        if field_name.item == "__typename" {
+                            return;
                         }
-                        _ => {}
                     }
 
                     context.report_error(
                         &error_message(field_name.item, type_name),
-                        &[field_name.start.clone()],
+                        &[field_name.start],
                     );
                 }
             }
@@ -55,9 +54,11 @@ fn error_message(field: &str, type_name: &str) -> String {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn selection_on_object() {
@@ -356,5 +357,4 @@ mod tests {
         "#,
         );
     }
-
 }

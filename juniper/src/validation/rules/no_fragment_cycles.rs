@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use ast::{Document, Fragment, FragmentSpread};
-use parser::Spanning;
-use validation::{RuleError, ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::{Document, Fragment, FragmentSpread},
+    parser::Spanning,
+    validation::{RuleError, ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 pub struct NoFragmentCycles<'a> {
     current_fragment: Option<&'a str>,
@@ -81,8 +83,8 @@ where
                 .entry(current_fragment)
                 .or_insert_with(Vec::new)
                 .push(Spanning::start_end(
-                    &spread.start.clone(),
-                    &spread.end.clone(),
+                    &spread.start,
+                    &spread.end,
                     spread.item.name.item,
                 ));
         }
@@ -110,10 +112,8 @@ impl<'a> CycleDetector<'a> {
                     node
                 };
 
-                self.errors.push(RuleError::new(
-                    &error_message(name),
-                    &[err_pos.start.clone()],
-                ));
+                self.errors
+                    .push(RuleError::new(&error_message(name), &[err_pos.start]));
             } else if !self.visited.contains(name) {
                 path.push(node);
                 self.detect_from(name, path);
@@ -133,9 +133,11 @@ fn error_message(frag_name: &str) -> String {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn single_reference_is_valid() {

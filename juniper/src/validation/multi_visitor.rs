@@ -1,10 +1,12 @@
-use ast::{
-    Directive, Document, Field, Fragment, FragmentSpread, InlineFragment, InputValue, Operation,
-    Selection, VariableDefinition,
+use crate::{
+    ast::{
+        Directive, Document, Field, Fragment, FragmentSpread, InlineFragment, InputValue,
+        Operation, Selection, VariableDefinition,
+    },
+    parser::Spanning,
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
 };
-use parser::Spanning;
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
 
 #[doc(hidden)]
 pub struct MultiVisitorNil;
@@ -122,11 +124,11 @@ where
         self.1.exit_argument(ctx, arg);
     }
 
-    fn enter_selection_set(&mut self, ctx: &mut ValidatorContext<'a, S>, s: &'a Vec<Selection<S>>) {
+    fn enter_selection_set(&mut self, ctx: &mut ValidatorContext<'a, S>, s: &'a [Selection<S>]) {
         self.0.enter_selection_set(ctx, s);
         self.1.enter_selection_set(ctx, s);
     }
-    fn exit_selection_set(&mut self, ctx: &mut ValidatorContext<'a, S>, s: &'a Vec<Selection<S>>) {
+    fn exit_selection_set(&mut self, ctx: &mut ValidatorContext<'a, S>, s: &'a [Selection<S>]) {
         self.0.exit_selection_set(ctx, s);
         self.1.exit_selection_set(ctx, s);
     }

@@ -1,8 +1,10 @@
-use ast::{Document, Fragment, FragmentSpread, InputValue, Operation, VariableDefinition};
-use parser::Spanning;
+use crate::{
+    ast::{Document, Fragment, FragmentSpread, InputValue, Operation, VariableDefinition},
+    parser::Spanning,
+    validation::{RuleError, ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 use std::collections::{HashMap, HashSet};
-use validation::{RuleError, ValidatorContext, Visitor};
-use value::ScalarValue;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Scope<'a> {
@@ -75,9 +77,7 @@ where
                 def_vars
                     .iter()
                     .filter(|var| !used.contains(var.item))
-                    .map(|var| {
-                        RuleError::new(&error_message(var.item, *op_name), &[var.start.clone()])
-                    })
+                    .map(|var| RuleError::new(&error_message(var.item, *op_name), &[var.start]))
                     .collect(),
             );
         }
@@ -143,11 +143,11 @@ where
 fn error_message(var_name: &str, op_name: Option<&str>) -> String {
     if let Some(op_name) = op_name {
         format!(
-            r#"Variable "${}" is not defined by operation "{}""#,
+            r#"Variable "${}" is not used by operation "{}""#,
             var_name, op_name
         )
     } else {
-        format!(r#"Variable "${}" is not defined"#, var_name)
+        format!(r#"Variable "${}" is not used"#, var_name)
     }
 }
 
@@ -155,9 +155,11 @@ fn error_message(var_name: &str, op_name: Option<&str>) -> String {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn uses_all_variables() {

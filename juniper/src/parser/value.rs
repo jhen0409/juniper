@@ -1,9 +1,13 @@
-use ast::InputValue;
+use crate::ast::InputValue;
 
-use parser::{ParseError, ParseResult, Parser, ScalarToken, SourcePosition, Spanning, Token};
-use schema::meta::{InputObjectMeta, MetaType};
-use schema::model::SchemaType;
-use value::ScalarValue;
+use crate::{
+    parser::{ParseError, ParseResult, Parser, ScalarToken, SourcePosition, Spanning, Token},
+    schema::{
+        meta::{InputObjectMeta, MetaType},
+        model::SchemaType,
+    },
+    value::ScalarValue,
+};
 
 pub fn parse_value_literal<'a, 'b, S>(
     parser: &mut Parser<'a>,
@@ -54,7 +58,7 @@ where
                 item: Token::Scalar(scalar),
                 start,
                 end,
-            } = parser.next()?
+            } = parser.next_token()?
             {
                 (s.parse_fn)(scalar)
                     .map(|s| Spanning::start_end(&start, &end, InputValue::Scalar(s)))
@@ -74,7 +78,7 @@ where
                 item: Token::Scalar(token),
                 start,
                 end,
-            } = parser.next()?
+            } = parser.next_token()?
             {
                 parse_scalar_literal_by_infered_type(token, &start, &end, schema)
             } else {
@@ -87,21 +91,21 @@ where
                 ..
             },
             _,
-        ) => Ok(parser.next()?.map(|_| InputValue::scalar(true))),
+        ) => Ok(parser.next_token()?.map(|_| InputValue::scalar(true))),
         (
             &Spanning {
                 item: Token::Name("false"),
                 ..
             },
             _,
-        ) => Ok(parser.next()?.map(|_| InputValue::scalar(false))),
+        ) => Ok(parser.next_token()?.map(|_| InputValue::scalar(false))),
         (
             &Spanning {
                 item: Token::Name("null"),
                 ..
             },
             _,
-        ) => Ok(parser.next()?.map(|_| InputValue::null())),
+        ) => Ok(parser.next_token()?.map(|_| InputValue::null())),
         (
             &Spanning {
                 item: Token::Name(name),
@@ -109,9 +113,9 @@ where
             },
             _,
         ) => Ok(parser
-            .next()?
+            .next_token()?
             .map(|_| InputValue::enum_value(name.to_owned()))),
-        _ => Err(parser.next()?.map(ParseError::UnexpectedToken)),
+        _ => Err(parser.next_token()?.map(ParseError::UnexpectedToken)),
     }
 }
 
@@ -171,7 +175,7 @@ where
     let value = parse_value_literal(parser, is_const, schema, tpe)?;
 
     Ok(Spanning::start_end(
-        &key.start.clone(),
+        &key.start,
         &value.end.clone(),
         (key.map(|s| s.to_owned()), value),
     ))
@@ -206,33 +210,36 @@ fn parse_scalar_literal_by_infered_type<'a, 'b, S>(
 where
     S: ScalarValue,
 {
-    match token {
+    let result = match token {
         ScalarToken::String(_) => {
             if let Some(&MetaType::Scalar(ref s)) = schema.concrete_type_by_name("String") {
-                (s.parse_fn)(token)
-                    .map(|s| Spanning::start_end(start, end, InputValue::Scalar(s)))
-                    .map_err(|e| Spanning::start_end(start, end, e))
+                (s.parse_fn)(token).map(InputValue::Scalar)
             } else {
-                panic!("There needs to be a String type")
+                Err(ParseError::ExpectedScalarError(
+                    "There needs to be a String type",
+                ))
             }
         }
         ScalarToken::Int(_) => {
             if let Some(&MetaType::Scalar(ref s)) = schema.concrete_type_by_name("Int") {
-                (s.parse_fn)(token)
-                    .map(|s| Spanning::start_end(start, end, InputValue::Scalar(s)))
-                    .map_err(|e| Spanning::start_end(start, end, e))
+                (s.parse_fn)(token).map(InputValue::Scalar)
             } else {
-                panic!("There needs to be a Int type")
+                Err(ParseError::ExpectedScalarError(
+                    "There needs to be an Int type",
+                ))
             }
         }
         ScalarToken::Float(_) => {
             if let Some(&MetaType::Scalar(ref s)) = schema.concrete_type_by_name("Float") {
-                (s.parse_fn)(token)
-                    .map(|s| Spanning::start_end(start, end, InputValue::Scalar(s)))
-                    .map_err(|e| Spanning::start_end(start, end, e))
+                (s.parse_fn)(token).map(InputValue::Scalar)
             } else {
-                panic!("There needs to be a Float type")
+                Err(ParseError::ExpectedScalarError(
+                    "There needs to be a Float type",
+                ))
             }
         }
-    }
+    };
+    result
+        .map(|s| Spanning::start_end(start, end, s))
+        .map_err(|e| Spanning::start_end(start, end, e))
 }

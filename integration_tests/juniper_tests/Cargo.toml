@@ -1,17 +1,16 @@
 [package]
 name = "juniper_tests"
 version = "0.1.0"
+edition = "2018"
 publish = false
 
 [dependencies]
-juniper = { version = "0.11.0", path = "../../juniper" }
-serde_json = { version = "1" }
+derive_more = "0.99.7"
+futures = "0.3.1"
+juniper = { path = "../../juniper" }
 
 [dev-dependencies]
+async-trait = "0.1.39"
+serde_json = { version = "1" }
 fnv = "1.0.3"
-indexmap = "1.0"
-
-[[test]]
-name = "integration_tests"
-path = "src/lib.rs"
-harness = true
+tokio = { version = "0.2", features = ["rt-core", "time", "macros"] }

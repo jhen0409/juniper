@@ -1,13 +1,17 @@
 //! Types used to describe a `GraphQL` schema
 
-use std::borrow::Cow;
-use std::fmt;
+use std::{
+    borrow::{Cow, ToOwned},
+    fmt,
+};
 
-use ast::{FromInputValue, InputValue, Type};
-use parser::{ParseError, ScalarToken};
-use schema::model::SchemaType;
-use types::base::TypeKind;
-use value::{DefaultScalarValue, ParseScalarValue, ScalarRefValue, ScalarValue};
+use crate::{
+    ast::{FromInputValue, InputValue, Type},
+    parser::{ParseError, ScalarToken},
+    schema::model::SchemaType,
+    types::base::TypeKind,
+    value::{DefaultScalarValue, ParseScalarValue, ScalarValue},
+};
 
 /// Whether an item is deprecated, with context.
 #[derive(Debug, PartialEq, Hash, Clone)]
@@ -22,16 +26,16 @@ impl DeprecationStatus {
     /// If this deprecation status indicates the item is deprecated.
     pub fn is_deprecated(&self) -> bool {
         match self {
-            &DeprecationStatus::Current => false,
-            &DeprecationStatus::Deprecated(_) => true,
+            DeprecationStatus::Current => false,
+            DeprecationStatus::Deprecated(_) => true,
         }
     }
 
     /// An optional reason for the deprecation, or none if `Current`.
     pub fn reason(&self) -> Option<&String> {
         match self {
-            &DeprecationStatus::Current => None,
-            &DeprecationStatus::Deprecated(ref reason) => reason.as_ref(),
+            DeprecationStatus::Current => None,
+            DeprecationStatus::Deprecated(ref reason) => reason.as_ref(),
         }
     }
 }
@@ -165,6 +169,14 @@ pub struct Field<'a, S> {
     pub deprecation_status: DeprecationStatus,
 }
 
+impl<'a, S> Field<'a, S> {
+    /// Returns true if the type is built-in to GraphQL.
+    pub fn is_builtin(&self) -> bool {
+        // "used exclusively by GraphQL’s introspection system"
+        self.name.starts_with("__")
+    }
+}
+
 /// Metadata for an argument to a field
 #[derive(Debug, Clone)]
 pub struct Argument<'a, S> {
@@ -176,6 +188,14 @@ pub struct Argument<'a, S> {
     pub arg_type: Type<'a>,
     #[doc(hidden)]
     pub default_value: Option<InputValue<S>>,
+}
+
+impl<'a, S> Argument<'a, S> {
+    /// Returns true if the type is built-in to GraphQL.
+    pub fn is_builtin(&self) -> bool {
+        // "used exclusively by GraphQL’s introspection system"
+        self.name.starts_with("__")
+    }
 }
 
 /// Metadata for a single value in an enum
@@ -364,6 +384,22 @@ impl<'a, S> MetaType<'a, S> {
         }
     }
 
+    /// Returns true if the type is built-in to GraphQL.
+    pub fn is_builtin(&self) -> bool {
+        if let Some(name) = self.name() {
+            // "used exclusively by GraphQL’s introspection system"
+            {
+                name.starts_with("__") ||
+            // <https://facebook.github.io/graphql/draft/#sec-Scalars>
+            name == "Boolean" || name == "String" || name == "Int" || name == "Float" || name == "ID" ||
+            // Our custom empty markers
+            name == "_EmptyMutation" || name == "_EmptySubscription"
+            }
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn fields<'b>(&self, schema: &'b SchemaType<S>) -> Option<Vec<&'b Field<'b, S>>> {
         schema
             .lookup_type(&self.as_type())
@@ -391,10 +427,9 @@ where
     pub fn new<T>(name: Cow<'a, str>) -> Self
     where
         T: FromInputValue<S> + ParseScalarValue<S> + 'a,
-        for<'b> &'b S: ScalarRefValue<'b>,
     {
         ScalarMeta {
-            name: name,
+            name,
             description: None,
             try_parse_fn: try_parse_fn::<S, T>,
             parse_fn: <T as ParseScalarValue<S>>::from_str,
@@ -418,7 +453,7 @@ where
 impl<'a> ListMeta<'a> {
     /// Build a new list type by wrapping the specified type
     pub fn new(of_type: Type<'a>) -> ListMeta<'a> {
-        ListMeta { of_type: of_type }
+        ListMeta { of_type }
     }
 
     /// Wrap the list in a generic meta type
@@ -430,7 +465,7 @@ impl<'a> ListMeta<'a> {
 impl<'a> NullableMeta<'a> {
     /// Build a new nullable type by wrapping the specified type
     pub fn new(of_type: Type<'a>) -> NullableMeta<'a> {
-        NullableMeta { of_type: of_type }
+        NullableMeta { of_type }
     }
 
     /// Wrap the nullable type in a generic meta type
@@ -446,7 +481,7 @@ where
     /// Build a new object type with the specified name and fields
     pub fn new(name: Cow<'a, str>, fields: &[Field<'a, S>]) -> Self {
         ObjectMeta {
-            name: name,
+            name,
             description: None,
             fields: fields.to_vec(),
             interface_names: vec![],
@@ -487,10 +522,9 @@ where
     pub fn new<T>(name: Cow<'a, str>, values: &[EnumValue]) -> Self
     where
         T: FromInputValue<S>,
-        for<'b> &'b S: ScalarRefValue<'b>,
     {
         EnumMeta {
-            name: name,
+            name,
             description: None,
             values: values.to_vec(),
             try_parse_fn: try_parse_fn::<S, T>,
@@ -518,7 +552,7 @@ where
     /// Build a new interface type with the specified name and fields
     pub fn new(name: Cow<'a, str>, fields: &[Field<'a, S>]) -> InterfaceMeta<'a, S> {
         InterfaceMeta {
-            name: name,
+            name,
             description: None,
             fields: fields.to_vec(),
         }
@@ -542,7 +576,7 @@ impl<'a> UnionMeta<'a> {
     /// Build a new union type with the specified name and possible types
     pub fn new(name: Cow<'a, str>, of_types: &[Type]) -> UnionMeta<'a> {
         UnionMeta {
-            name: name,
+            name,
             description: None,
             of_type_names: of_types
                 .iter()
@@ -570,12 +604,12 @@ where
     S: ScalarValue,
 {
     /// Build a new input type with the specified name and input fields
-    pub fn new<T: FromInputValue<S>>(name: Cow<'a, str>, input_fields: &[Argument<'a, S>]) -> Self
+    pub fn new<T>(name: Cow<'a, str>, input_fields: &[Argument<'a, S>]) -> Self
     where
-        for<'b> &'b S: ScalarRefValue<'b>,
+        T: FromInputValue<S> + ?Sized,
     {
         InputObjectMeta {
-            name: name,
+            name,
             description: None,
             input_fields: input_fields.to_vec(),
             try_parse_fn: try_parse_fn::<S, T>,
@@ -605,29 +639,6 @@ impl<'a, S> Field<'a, S> {
         self
     }
 
-    /// Adds a (multi)line doc string to the description of the field.
-    /// Any leading or trailing newlines will be removed.
-    ///
-    /// If the docstring contains newlines, repeated leading tab and space characters
-    /// will be removed from the beginning of each line.
-    ///
-    /// If the description hasn't been set, the description is set to the provided line.
-    /// Otherwise, the doc string is added to the current description after a newline.
-    pub fn push_docstring(mut self, multiline: &[&str]) -> Field<'a, S> {
-        if let Some(docstring) = clean_docstring(multiline) {
-            match &mut self.description {
-                &mut Some(ref mut desc) => {
-                    desc.push('\n');
-                    desc.push_str(&docstring);
-                }
-                desc @ &mut None => {
-                    *desc = Some(docstring);
-                }
-            }
-        }
-        self
-    }
-
     /// Add an argument to the field
     ///
     /// Arguments are unordered and can't contain duplicates by name.
@@ -648,7 +659,7 @@ impl<'a, S> Field<'a, S> {
     ///
     /// This overwrites the deprecation reason if any was previously set.
     pub fn deprecated(mut self, reason: Option<&str>) -> Self {
-        self.deprecation_status = DeprecationStatus::Deprecated(reason.map(|s| s.to_owned()));
+        self.deprecation_status = DeprecationStatus::Deprecated(reason.map(ToOwned::to_owned));
         self
     }
 }
@@ -659,7 +670,7 @@ impl<'a, S> Argument<'a, S> {
         Argument {
             name: name.to_owned(),
             description: None,
-            arg_type: arg_type,
+            arg_type,
             default_value: None,
         }
     }
@@ -672,30 +683,9 @@ impl<'a, S> Argument<'a, S> {
         self
     }
 
-    /// Adds a (multi)line doc string to the description of the field.
-    /// Any leading or trailing newlines will be removed.
-    ///
-    /// If the docstring contains newlines, repeated leading tab and space characters
-    /// will be removed from the beginning of each line.
-    ///
-    /// If the description hasn't been set, the description is set to the provided line.
-    /// Otherwise, the doc string is added to the current description after a newline.
-    pub fn push_docstring(mut self, multiline: &[&str]) -> Argument<'a, S> {
-        if let Some(docstring) = clean_docstring(multiline) {
-            match &mut self.description {
-                &mut Some(ref mut desc) => {
-                    desc.push('\n');
-                    desc.push_str(&docstring);
-                }
-                desc @ &mut None => *desc = Some(docstring),
-            }
-        }
-        self
-    }
-
     /// Set the default value of the argument
     ///
-    /// This overwrites the description if any was previously set.
+    /// This overwrites the default value if any was previously set.
     pub fn default_value(mut self, default_value: InputValue<S>) -> Self {
         self.default_value = Some(default_value);
         self
@@ -724,7 +714,7 @@ impl EnumValue {
     ///
     /// This overwrites the deprecation reason if any was previously set.
     pub fn deprecated(mut self, reason: Option<&str>) -> Self {
-        self.deprecation_status = DeprecationStatus::Deprecated(reason.map(|s| s.to_owned()));
+        self.deprecation_status = DeprecationStatus::Deprecated(reason.map(ToOwned::to_owned));
         self
     }
 }
@@ -761,44 +751,6 @@ impl<'a, S: fmt::Debug> fmt::Debug for InputObjectMeta<'a, S> {
 fn try_parse_fn<S, T>(v: &InputValue<S>) -> bool
 where
     T: FromInputValue<S>,
-    for<'b> &'b S: ScalarRefValue<'b>,
 {
     <T as FromInputValue<S>>::from_input_value(v).is_some()
-}
-
-fn clean_docstring(multiline: &[&str]) -> Option<String> {
-    if multiline.is_empty() {
-        return None;
-    }
-    let trim_start = multiline
-        .iter()
-        .filter_map(|ln| ln.chars().position(|ch| !ch.is_whitespace()))
-        .min()
-        .unwrap_or(0);
-    Some(
-        multiline
-            .iter()
-            .enumerate()
-            .flat_map(|(line, ln)| {
-                let new_ln = if !ln
-                    .chars()
-                    .next()
-                    .map(|ch| ch.is_whitespace())
-                    .unwrap_or(false)
-                {
-                    ln.trim_right() // skip trimming the first line
-                } else if ln.len() >= trim_start {
-                    ln[trim_start..].trim_right()
-                } else {
-                    ""
-                };
-                new_ln.chars().chain(
-                    ['\n']
-                        .iter()
-                        .take_while(move |_| line < multiline.len() - 1)
-                        .cloned(),
-                )
-            })
-            .collect::<String>(),
-    )
 }

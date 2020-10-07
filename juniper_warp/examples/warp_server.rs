@@ -1,27 +1,29 @@
 #![deny(warnings)]
 
-extern crate env_logger;
-#[macro_use]
-extern crate log as irrelevant_log;
-extern crate juniper;
-extern crate juniper_warp;
-extern crate warp;
+use std::env;
 
-use juniper::tests::model::Database;
-use juniper::{EmptyMutation, RootNode};
-use warp::{http::Response, log, Filter};
+use juniper::{
+    tests::fixtures::starwars::schema::{Database, Query},
+    EmptyMutation, EmptySubscription, RootNode,
+};
+use warp::{http::Response, Filter};
 
-type Schema = RootNode<'static, Database, EmptyMutation<Database>>;
+type Schema = RootNode<'static, Query, EmptyMutation<Database>, EmptySubscription<Database>>;
 
 fn schema() -> Schema {
-    Schema::new(Database::new(), EmptyMutation::<Database>::new())
+    Schema::new(
+        Query,
+        EmptyMutation::<Database>::new(),
+        EmptySubscription::<Database>::new(),
+    )
 }
 
-fn main() {
-    ::std::env::set_var("RUST_LOG", "warp_server");
+#[tokio::main]
+async fn main() {
+    env::set_var("RUST_LOG", "warp_server");
     env_logger::init();
 
-    let log = log("warp_server");
+    let log = warp::log("warp_server");
 
     let homepage = warp::path::end().map(|| {
         Response::builder()
@@ -31,18 +33,19 @@ fn main() {
             ))
     });
 
-    info!("Listening on 127.0.0.1:8080");
+    log::info!("Listening on 127.0.0.1:8080");
 
     let state = warp::any().map(move || Database::new());
     let graphql_filter = juniper_warp::make_graphql_filter(schema(), state.boxed());
 
     warp::serve(
-        warp::get2()
+        warp::get()
             .and(warp::path("graphiql"))
-            .and(juniper_warp::graphiql_filter("/graphql"))
+            .and(juniper_warp::graphiql_filter("/graphql", None))
             .or(homepage)
             .or(warp::path("graphql").and(graphql_filter))
             .with(log),
     )
-    .run(([127, 0, 0, 1], 8080));
+    .run(([127, 0, 0, 1], 8080))
+    .await
 }

@@ -5,12 +5,16 @@ mod input_object;
 #[allow(unused_imports)]
 use self::input_object::{NamedPublic, NamedPublicWithDescription};
 
-use executor::Variables;
-use schema::model::RootNode;
-use types::scalars::EmptyMutation;
-use value::{ParseScalarResult, ParseScalarValue, Value};
+use crate::{
+    executor::Variables,
+    graphql_interface, graphql_object,
+    schema::model::RootNode,
+    types::scalars::{EmptyMutation, EmptySubscription},
+    value::{DefaultScalarValue, ParseScalarResult, ParseScalarValue, Value},
+    GraphQLEnum,
+};
 
-#[derive(GraphQLEnumInternal)]
+#[derive(GraphQLEnum)]
 #[graphql(name = "SampleEnum")]
 enum Sample {
     One,
@@ -19,55 +23,55 @@ enum Sample {
 
 struct Scalar(i32);
 
-struct Interface;
-
-struct Root;
-
-graphql_scalar!(Scalar as "SampleScalar" {
-    resolve(&self) -> Value {
+#[crate::graphql_scalar(name = "SampleScalar")]
+impl GraphQLScalar for Scalar {
+    fn resolve(&self) -> Value {
         Value::scalar(self.0)
     }
 
-    from_input_value(v: &InputValue) -> Option<Scalar> {
+    fn from_input_value(v: &InputValue) -> Option<Scalar> {
         v.as_scalar_value().map(|i: &i32| Scalar(*i))
     }
 
-    from_str<'a>(value: ScalarToken<'a>) -> ParseScalarResult<'a> {
+    fn from_str<'a>(value: ScalarToken<'a>) -> ParseScalarResult<'a, DefaultScalarValue> {
         <i32 as ParseScalarValue>::from_str(value)
     }
-});
+}
 
-graphql_interface!(Interface: () as "SampleInterface" |&self| {
-    description: "A sample interface"
+/// A sample interface
+#[graphql_interface(name = "SampleInterface", for = Root, scalar = DefaultScalarValue)]
+trait Interface {
+    /// A sample field in the interface
+    fn sample_enum(&self) -> Sample {
+        Sample::One
+    }
+}
 
-    field sample_enum() -> Sample as "A sample field in the interface" {
+struct Root;
+
+/// The root query object in the schema
+#[graphql_object(interfaces = InterfaceValue)]
+impl Root {
+    fn sample_enum() -> Sample {
         Sample::One
     }
 
-    instance_resolvers: |&_| {
-        Root => Some(Root),
-    }
-});
+    #[graphql(arguments(
+        first(description = "The first number",),
+        second(description = "The second number", default = 123),
+    ))]
 
-graphql_object!(Root: () |&self| {
-    description: "The root query object in the schema"
-
-    interfaces: [Interface]
-
-    field sample_enum() -> Sample {
-        Sample::One
-    }
-
-    field sample_scalar(
-        first: i32 as "The first number",
-        second = 123: i32 as "The second number"
-    ) -> Scalar as "A sample scalar field on the object" {
+    /// A sample scalar field on the object
+    fn sample_scalar(first: i32, second: i32) -> Scalar {
         Scalar(first + second)
     }
-});
+}
 
-#[test]
-fn test_execution() {
+#[graphql_interface(scalar = DefaultScalarValue)]
+impl Interface for Root {}
+
+#[tokio::test]
+async fn test_execution() {
     let doc = r#"
     {
         sampleEnum
@@ -75,10 +79,15 @@ fn test_execution() {
         second: sampleScalar(first: 10 second: 20)
     }
     "#;
-    let schema = RootNode::new(Root, EmptyMutation::<()>::new());
+    let schema = RootNode::new(
+        Root,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
-    let (result, errs) =
-        ::execute(doc, None, &schema, &Variables::new(), &()).expect("Execution failed");
+    let (result, errs) = crate::execute(doc, None, &schema, &Variables::new(), &())
+        .await
+        .expect("Execution failed");
 
     assert_eq!(errs, []);
 
@@ -98,8 +107,8 @@ fn test_execution() {
     );
 }
 
-#[test]
-fn enum_introspection() {
+#[tokio::test]
+async fn enum_introspection() {
     let doc = r#"
     {
         __type(name: "SampleEnum") {
@@ -119,10 +128,15 @@ fn enum_introspection() {
         }
     }
     "#;
-    let schema = RootNode::new(Root, EmptyMutation::<()>::new());
+    let schema = RootNode::new(
+        Root,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
-    let (result, errs) =
-        ::execute(doc, None, &schema, &Variables::new(), &()).expect("Execution failed");
+    let (result, errs) = crate::execute(doc, None, &schema, &Variables::new(), &())
+        .await
+        .expect("Execution failed");
 
     assert_eq!(errs, []);
 
@@ -193,8 +207,8 @@ fn enum_introspection() {
     )));
 }
 
-#[test]
-fn interface_introspection() {
+#[tokio::test]
+async fn interface_introspection() {
     let doc = r#"
     {
         __type(name: "SampleInterface") {
@@ -228,10 +242,15 @@ fn interface_introspection() {
         }
     }
     "#;
-    let schema = RootNode::new(Root, EmptyMutation::<()>::new());
+    let schema = RootNode::new(
+        Root,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
-    let (result, errs) =
-        ::execute(doc, None, &schema, &Variables::new(), &()).expect("Execution failed");
+    let (result, errs) = crate::execute(doc, None, &schema, &Variables::new(), &())
+        .await
+        .expect("Execution failed");
 
     assert_eq!(errs, []);
 
@@ -329,8 +348,8 @@ fn interface_introspection() {
     )));
 }
 
-#[test]
-fn object_introspection() {
+#[tokio::test]
+async fn object_introspection() {
     let doc = r#"
     {
         __type(name: "Root") {
@@ -375,10 +394,15 @@ fn object_introspection() {
         }
     }
     "#;
-    let schema = RootNode::new(Root, EmptyMutation::<()>::new());
+    let schema = RootNode::new(
+        Root,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
-    let (result, errs) =
-        ::execute(doc, None, &schema, &Variables::new(), &()).expect("Execution failed");
+    let (result, errs) = crate::execute(doc, None, &schema, &Variables::new(), &())
+        .await
+        .expect("Execution failed");
 
     assert_eq!(errs, []);
 
@@ -565,8 +589,8 @@ fn object_introspection() {
     )));
 }
 
-#[test]
-fn scalar_introspection() {
+#[tokio::test]
+async fn scalar_introspection() {
     let doc = r#"
     {
         __type(name: "SampleScalar") {
@@ -582,10 +606,15 @@ fn scalar_introspection() {
         }
     }
     "#;
-    let schema = RootNode::new(Root, EmptyMutation::<()>::new());
+    let schema = RootNode::new(
+        Root,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
-    let (result, errs) =
-        ::execute(doc, None, &schema, &Variables::new(), &()).expect("Execution failed");
+    let (result, errs) = crate::execute(doc, None, &schema, &Variables::new(), &())
+        .await
+        .expect("Execution failed");
 
     assert_eq!(errs, []);
 

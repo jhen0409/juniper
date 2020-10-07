@@ -1,23 +1,27 @@
-use ast::InputValue;
-use executor::Variables;
-use parser::SourcePosition;
-use schema::model::RootNode;
-use types::scalars::EmptyMutation;
-use validation::RuleError;
-use value::{DefaultScalarValue, Object, ParseScalarResult, ParseScalarValue, Value};
-use GraphQLError::ValidationError;
+use crate::{
+    ast::InputValue,
+    executor::Variables,
+    parser::SourcePosition,
+    schema::model::RootNode,
+    types::scalars::{EmptyMutation, EmptySubscription},
+    validation::RuleError,
+    value::{DefaultScalarValue, Object, ParseScalarResult, ParseScalarValue, Value},
+    GraphQLError::ValidationError,
+    GraphQLInputObject,
+};
 
 #[derive(Debug)]
 struct TestComplexScalar;
 
 struct TestType;
 
-graphql_scalar!(TestComplexScalar {
-    resolve(&self) -> Value {
+#[crate::graphql_scalar]
+impl GraphQLScalar for TestComplexScalar {
+    fn resolve(&self) -> Value {
         Value::scalar(String::from("SerializedValue"))
     }
 
-    from_input_value(v: &InputValue) -> Option<TestComplexScalar> {
+    fn from_input_value(v: &InputValue) -> Option<TestComplexScalar> {
         if let Some(s) = v.as_scalar_value::<String>() {
             if *s == "SerializedValue" {
                 return Some(TestComplexScalar);
@@ -27,13 +31,13 @@ graphql_scalar!(TestComplexScalar {
         None
     }
 
-    from_str<'a>(value: ScalarToken<'a>) -> ParseScalarResult<'a> {
-        <String as ParseScalarValue<_>>::from_str(value)
+    fn from_str<'a>(value: ScalarToken<'a>) -> ParseScalarResult<'a, DefaultScalarValue> {
+        <String as ParseScalarValue>::from_str(value)
     }
-});
+}
 
-#[derive(GraphQLInputObjectInternal, Debug)]
-#[graphql(scalar = "DefaultScalarValue")]
+#[derive(GraphQLInputObject, Debug)]
+#[graphql(scalar = DefaultScalarValue)]
 struct TestInputObject {
     a: Option<String>,
     b: Option<Vec<Option<String>>>,
@@ -41,86 +45,100 @@ struct TestInputObject {
     d: Option<TestComplexScalar>,
 }
 
-#[derive(GraphQLInputObjectInternal, Debug)]
-#[graphql(scalar = "DefaultScalarValue")]
+#[derive(GraphQLInputObject, Debug)]
+#[graphql(scalar = DefaultScalarValue)]
 struct TestNestedInputObject {
     na: TestInputObject,
     nb: String,
 }
 
-#[derive(GraphQLInputObjectInternal, Debug)]
+#[derive(GraphQLInputObject, Debug)]
 struct ExampleInputObject {
     a: Option<String>,
     b: i32,
 }
 
-#[derive(GraphQLInputObjectInternal, Debug)]
+#[derive(GraphQLInputObject, Debug)]
 struct InputWithDefaults {
     #[graphql(default = "123")]
     a: i32,
 }
 
-graphql_object!(TestType: () |&self| {
-    field field_with_object_input(input: Option<TestInputObject>) -> String {
+#[crate::graphql_object]
+impl TestType {
+    fn field_with_object_input(input: Option<TestInputObject>) -> String {
         format!("{:?}", input)
     }
 
-    field field_with_nullable_string_input(input: Option<String>) -> String {
+    fn field_with_nullable_string_input(input: Option<String>) -> String {
         format!("{:?}", input)
     }
 
-    field field_with_non_nullable_string_input(input: String) -> String {
+    fn field_with_non_nullable_string_input(input: String) -> String {
         format!("{:?}", input)
     }
 
-    field field_with_default_argument_value(input = ("Hello World".to_owned()): String) -> String {
+    #[graphql(
+        arguments(
+            input(
+                default = "Hello World".to_string(),
+            )
+        )
+    )]
+    fn field_with_default_argument_value(input: String) -> String {
         format!("{:?}", input)
     }
 
-    field field_with_nested_object_input(input: Option<TestNestedInputObject>) -> String {
+    fn field_with_nested_object_input(input: Option<TestNestedInputObject>) -> String {
         format!("{:?}", input)
     }
 
-    field list(input: Option<Vec<Option<String>>>) -> String {
+    fn list(input: Option<Vec<Option<String>>>) -> String {
         format!("{:?}", input)
     }
 
-    field nn_list(input: Vec<Option<String>>) -> String {
+    fn nn_list(input: Vec<Option<String>>) -> String {
         format!("{:?}", input)
     }
 
-    field list_nn(input: Option<Vec<String>>) -> String {
+    fn list_nn(input: Option<Vec<String>>) -> String {
         format!("{:?}", input)
     }
 
-    field nn_list_nn(input: Vec<String>) -> String {
+    fn nn_list_nn(input: Vec<String>) -> String {
         format!("{:?}", input)
     }
 
-    field example_input(arg: ExampleInputObject) -> String {
+    fn example_input(arg: ExampleInputObject) -> String {
         format!("a: {:?}, b: {:?}", arg.a, arg.b)
     }
 
-    field input_with_defaults(arg: InputWithDefaults) -> String {
+    fn input_with_defaults(arg: InputWithDefaults) -> String {
         format!("a: {:?}", arg.a)
     }
 
-    field integer_input(value: i32) -> String {
+    fn integer_input(value: i32) -> String {
         format!("value: {}", value)
     }
 
-    field float_input(value: f64) -> String {
+    fn float_input(value: f64) -> String {
         format!("value: {}", value)
     }
-});
+}
 
-fn run_variable_query<F>(query: &str, vars: Variables<DefaultScalarValue>, f: F)
+async fn run_variable_query<F>(query: &str, vars: Variables<DefaultScalarValue>, f: F)
 where
     F: Fn(&Object<DefaultScalarValue>) -> (),
 {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
-    let (result, errs) = ::execute(query, None, &schema, &vars, &()).expect("Execution failed");
+    let (result, errs) = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .expect("Execution failed");
 
     assert_eq!(errs, []);
 
@@ -131,51 +149,60 @@ where
     f(obj);
 }
 
-fn run_query<F>(query: &str, f: F)
+async fn run_query<F>(query: &str, f: F)
 where
     F: Fn(&Object<DefaultScalarValue>) -> (),
 {
-    run_variable_query(query, Variables::new(), f);
+    run_variable_query(query, Variables::new(), f).await;
 }
 
-#[test]
-fn inline_complex_input() {
+#[tokio::test]
+async fn inline_complex_input() {
     run_query(
         r#"{ fieldWithObjectInput(input: {a: "foo", b: ["bar"], c: "baz"}) }"#,
         |result: &Object<DefaultScalarValue>| {
             assert_eq!(
                 result.get_field_value("fieldWithObjectInput"),
-                Some(&Value::scalar(r#"Some(TestInputObject { a: Some("foo"), b: Some([Some("bar")]), c: "baz", d: None })"#)));
+                Some(&Value::scalar(
+                    r#"Some(TestInputObject { a: Some("foo"), b: Some([Some("bar")]), c: "baz", d: None })"#
+                ))
+            );
         },
-    );
+    ).await;
 }
 
-#[test]
-fn inline_parse_single_value_to_list() {
+#[tokio::test]
+async fn inline_parse_single_value_to_list() {
     run_query(
         r#"{ fieldWithObjectInput(input: {a: "foo", b: "bar", c: "baz"}) }"#,
         |result: &Object<DefaultScalarValue>| {
             assert_eq!(
                 result.get_field_value("fieldWithObjectInput"),
-                Some(&Value::scalar(r#"Some(TestInputObject { a: Some("foo"), b: Some([Some("bar")]), c: "baz", d: None })"#)));
+                Some(&Value::scalar(
+                    r#"Some(TestInputObject { a: Some("foo"), b: Some([Some("bar")]), c: "baz", d: None })"#
+                ))
+            );
         },
-    );
+    ).await;
 }
 
-#[test]
-fn inline_runs_from_input_value_on_scalar() {
+#[tokio::test]
+async fn inline_runs_from_input_value_on_scalar() {
     run_query(
         r#"{ fieldWithObjectInput(input: {c: "baz", d: "SerializedValue"}) }"#,
         |result: &Object<DefaultScalarValue>| {
             assert_eq!(
                 result.get_field_value("fieldWithObjectInput"),
-                Some(&Value::scalar(r#"Some(TestInputObject { a: None, b: None, c: "baz", d: Some(TestComplexScalar) })"#)));
+                Some(&Value::scalar(
+                    r#"Some(TestInputObject { a: None, b: None, c: "baz", d: Some(TestComplexScalar) })"#
+                ))
+            );
         },
-    );
+    ).await;
 }
 
-#[test]
-fn variable_complex_input() {
+#[tokio::test]
+async fn variable_complex_input() {
     run_variable_query(
         r#"query q($input: TestInputObject) { fieldWithObjectInput(input: $input) }"#,
         vec![(
@@ -195,13 +222,16 @@ fn variable_complex_input() {
         |result: &Object<DefaultScalarValue>| {
             assert_eq!(
                 result.get_field_value("fieldWithObjectInput"),
-                Some(&Value::scalar(r#"Some(TestInputObject { a: Some("foo"), b: Some([Some("bar")]), c: "baz", d: None })"#)));
+                Some(&Value::scalar(
+                    r#"Some(TestInputObject { a: Some("foo"), b: Some([Some("bar")]), c: "baz", d: None })"#
+                ))
+            );
         },
-    );
+    ).await;
 }
 
-#[test]
-fn variable_parse_single_value_to_list() {
+#[tokio::test]
+async fn variable_parse_single_value_to_list() {
     run_variable_query(
         r#"query q($input: TestInputObject) { fieldWithObjectInput(input: $input) }"#,
         vec![(
@@ -221,13 +251,16 @@ fn variable_parse_single_value_to_list() {
         |result: &Object<DefaultScalarValue>| {
             assert_eq!(
                 result.get_field_value("fieldWithObjectInput"),
-                Some(&Value::scalar(r#"Some(TestInputObject { a: Some("foo"), b: Some([Some("bar")]), c: "baz", d: None })"#)));
+                Some(&Value::scalar(
+                    r#"Some(TestInputObject { a: Some("foo"), b: Some([Some("bar")]), c: "baz", d: None })"#
+                ))
+            );
         },
-    );
+    ).await;
 }
 
-#[test]
-fn variable_runs_from_input_value_on_scalar() {
+#[tokio::test]
+async fn variable_runs_from_input_value_on_scalar() {
     run_variable_query(
         r#"query q($input: TestInputObject) { fieldWithObjectInput(input: $input) }"#,
         vec![(
@@ -246,14 +279,21 @@ fn variable_runs_from_input_value_on_scalar() {
         |result: &Object<DefaultScalarValue>| {
             assert_eq!(
                 result.get_field_value("fieldWithObjectInput"),
-                Some(&Value::scalar(r#"Some(TestInputObject { a: None, b: None, c: "baz", d: Some(TestComplexScalar) })"#)));
+                Some(&Value::scalar(
+                    r#"Some(TestInputObject { a: None, b: None, c: "baz", d: Some(TestComplexScalar) })"#
+                ))
+            );
         },
-    );
+    ).await;
 }
 
-#[test]
-fn variable_error_on_nested_non_null() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn variable_error_on_nested_non_null() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($input: TestInputObject) { fieldWithObjectInput(input: $input) }"#;
     let vars = vec![(
@@ -271,7 +311,9 @@ fn variable_error_on_nested_non_null() {
     .into_iter()
     .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -282,28 +324,39 @@ fn variable_error_on_nested_non_null() {
     );
 }
 
-#[test]
-fn variable_error_on_incorrect_type() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn variable_error_on_incorrect_type() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($input: TestInputObject) { fieldWithObjectInput(input: $input) }"#;
     let vars = vec![("input".to_owned(), InputValue::scalar("foo bar"))]
         .into_iter()
         .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
-    assert_eq!(error, ValidationError(vec![
-        RuleError::new(
+    assert_eq!(
+        error,
+        ValidationError(vec![RuleError::new(
             r#"Variable "$input" got invalid value. Expected "TestInputObject", found not an object."#,
             &[SourcePosition::new(8, 0, 8)],
-        ),
-    ]));
+        ),])
+    );
 }
 
-#[test]
-fn variable_error_on_omit_non_null() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn variable_error_on_omit_non_null() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($input: TestInputObject) { fieldWithObjectInput(input: $input) }"#;
     let vars = vec![(
@@ -320,7 +373,9 @@ fn variable_error_on_omit_non_null() {
     .into_iter()
     .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -331,9 +386,13 @@ fn variable_error_on_omit_non_null() {
     );
 }
 
-#[test]
-fn variable_multiple_errors_with_nesting() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn variable_multiple_errors_with_nesting() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query =
         r#"query q($input: TestNestedInputObject) { fieldWithNestedObjectInput(input: $input) }"#;
@@ -351,23 +410,32 @@ fn variable_multiple_errors_with_nesting() {
     .into_iter()
     .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
-    assert_eq!(error, ValidationError(vec![
-        RuleError::new(
-            r#"Variable "$input" got invalid value. In field "na": In field "c": Expected "String!", found null."#,
-            &[SourcePosition::new(8, 0, 8)],
-        ),
-        RuleError::new(
-            r#"Variable "$input" got invalid value. In field "nb": Expected "String!", found null."#,
-            &[SourcePosition::new(8, 0, 8)],
-        ),
-    ]));
+    assert_eq!(
+        error,
+        ValidationError(vec![
+            RuleError::new(
+                r#"Variable "$input" got invalid value. In field "na": In field "c": Expected "String!", found null."#,
+                &[SourcePosition::new(8, 0, 8)],
+            ),
+            RuleError::new(
+                r#"Variable "$input" got invalid value. In field "nb": Expected "String!", found null."#,
+                &[SourcePosition::new(8, 0, 8)],
+            ),
+        ])
+    );
 }
 
-#[test]
-fn variable_error_on_additional_field() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn variable_error_on_additional_field() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($input: TestInputObject) { fieldWithObjectInput(input: $input) }"#;
     let vars = vec![(
@@ -386,7 +454,9 @@ fn variable_error_on_additional_field() {
     .into_iter()
     .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -397,8 +467,8 @@ fn variable_error_on_additional_field() {
     );
 }
 
-#[test]
-fn allow_nullable_inputs_to_be_omitted() {
+#[tokio::test]
+async fn allow_nullable_inputs_to_be_omitted() {
     run_query(
         r#"{ fieldWithNullableStringInput }"#,
         |result: &Object<DefaultScalarValue>| {
@@ -407,11 +477,12 @@ fn allow_nullable_inputs_to_be_omitted() {
                 Some(&Value::scalar(r#"None"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_nullable_inputs_to_be_omitted_in_variable() {
+#[tokio::test]
+async fn allow_nullable_inputs_to_be_omitted_in_variable() {
     run_query(
         r#"query q($value: String) { fieldWithNullableStringInput(input: $value) }"#,
         |result: &Object<DefaultScalarValue>| {
@@ -420,11 +491,12 @@ fn allow_nullable_inputs_to_be_omitted_in_variable() {
                 Some(&Value::scalar(r#"None"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_nullable_inputs_to_be_explicitly_null() {
+#[tokio::test]
+async fn allow_nullable_inputs_to_be_explicitly_null() {
     run_query(
         r#"{ fieldWithNullableStringInput(input: null) }"#,
         |result: &Object<DefaultScalarValue>| {
@@ -433,11 +505,12 @@ fn allow_nullable_inputs_to_be_explicitly_null() {
                 Some(&Value::scalar(r#"None"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_nullable_inputs_to_be_set_to_null_in_variable() {
+#[tokio::test]
+async fn allow_nullable_inputs_to_be_set_to_null_in_variable() {
     run_variable_query(
         r#"query q($value: String) { fieldWithNullableStringInput(input: $value) }"#,
         vec![("value".to_owned(), InputValue::null())]
@@ -449,11 +522,12 @@ fn allow_nullable_inputs_to_be_set_to_null_in_variable() {
                 Some(&Value::scalar(r#"None"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_nullable_inputs_to_be_set_to_value_in_variable() {
+#[tokio::test]
+async fn allow_nullable_inputs_to_be_set_to_value_in_variable() {
     run_variable_query(
         r#"query q($value: String) { fieldWithNullableStringInput(input: $value) }"#,
         vec![("value".to_owned(), InputValue::scalar("a"))]
@@ -465,11 +539,12 @@ fn allow_nullable_inputs_to_be_set_to_value_in_variable() {
                 Some(&Value::scalar(r#"Some("a")"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_nullable_inputs_to_be_set_to_value_directly() {
+#[tokio::test]
+async fn allow_nullable_inputs_to_be_set_to_value_directly() {
     run_query(
         r#"{ fieldWithNullableStringInput(input: "a") }"#,
         |result: &Object<DefaultScalarValue>| {
@@ -478,17 +553,24 @@ fn allow_nullable_inputs_to_be_set_to_value_directly() {
                 Some(&Value::scalar(r#"Some("a")"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn does_not_allow_non_nullable_input_to_be_omitted_in_variable() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_non_nullable_input_to_be_omitted_in_variable() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($value: String!) { fieldWithNonNullableStringInput(input: $value) }"#;
     let vars = vec![].into_iter().collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -499,16 +581,22 @@ fn does_not_allow_non_nullable_input_to_be_omitted_in_variable() {
     );
 }
 
-#[test]
-fn does_not_allow_non_nullable_input_to_be_set_to_null_in_variable() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_non_nullable_input_to_be_set_to_null_in_variable() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($value: String!) { fieldWithNonNullableStringInput(input: $value) }"#;
     let vars = vec![("value".to_owned(), InputValue::null())]
         .into_iter()
         .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -519,8 +607,8 @@ fn does_not_allow_non_nullable_input_to_be_set_to_null_in_variable() {
     );
 }
 
-#[test]
-fn allow_non_nullable_inputs_to_be_set_to_value_in_variable() {
+#[tokio::test]
+async fn allow_non_nullable_inputs_to_be_set_to_value_in_variable() {
     run_variable_query(
         r#"query q($value: String!) { fieldWithNonNullableStringInput(input: $value) }"#,
         vec![("value".to_owned(), InputValue::scalar("a"))]
@@ -532,11 +620,12 @@ fn allow_non_nullable_inputs_to_be_set_to_value_in_variable() {
                 Some(&Value::scalar(r#""a""#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_non_nullable_inputs_to_be_set_to_value_directly() {
+#[tokio::test]
+async fn allow_non_nullable_inputs_to_be_set_to_value_directly() {
     run_query(
         r#"{ fieldWithNonNullableStringInput(input: "a") }"#,
         |result: &Object<DefaultScalarValue>| {
@@ -545,11 +634,12 @@ fn allow_non_nullable_inputs_to_be_set_to_value_directly() {
                 Some(&Value::scalar(r#""a""#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_lists_to_be_null() {
+#[tokio::test]
+async fn allow_lists_to_be_null() {
     run_variable_query(
         r#"query q($input: [String]) { list(input: $input) }"#,
         vec![("input".to_owned(), InputValue::null())]
@@ -561,11 +651,12 @@ fn allow_lists_to_be_null() {
                 Some(&Value::scalar(r#"None"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_lists_to_contain_values() {
+#[tokio::test]
+async fn allow_lists_to_contain_values() {
     run_variable_query(
         r#"query q($input: [String]) { list(input: $input) }"#,
         vec![(
@@ -580,11 +671,12 @@ fn allow_lists_to_contain_values() {
                 Some(&Value::scalar(r#"Some([Some("A")])"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_lists_to_contain_null() {
+#[tokio::test]
+async fn allow_lists_to_contain_null() {
     run_variable_query(
         r#"query q($input: [String]) { list(input: $input) }"#,
         vec![(
@@ -603,19 +695,26 @@ fn allow_lists_to_contain_null() {
                 Some(&Value::scalar(r#"Some([Some("A"), None, Some("B")])"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn does_not_allow_non_null_lists_to_be_null() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_non_null_lists_to_be_null() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($input: [String]!) { nnList(input: $input) }"#;
     let vars = vec![("input".to_owned(), InputValue::null())]
         .into_iter()
         .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -626,8 +725,8 @@ fn does_not_allow_non_null_lists_to_be_null() {
     );
 }
 
-#[test]
-fn allow_non_null_lists_to_contain_values() {
+#[tokio::test]
+async fn allow_non_null_lists_to_contain_values() {
     run_variable_query(
         r#"query q($input: [String]!) { nnList(input: $input) }"#,
         vec![(
@@ -642,10 +741,11 @@ fn allow_non_null_lists_to_contain_values() {
                 Some(&Value::scalar(r#"[Some("A")]"#))
             );
         },
-    );
+    )
+    .await;
 }
-#[test]
-fn allow_non_null_lists_to_contain_null() {
+#[tokio::test]
+async fn allow_non_null_lists_to_contain_null() {
     run_variable_query(
         r#"query q($input: [String]!) { nnList(input: $input) }"#,
         vec![(
@@ -664,11 +764,12 @@ fn allow_non_null_lists_to_contain_null() {
                 Some(&Value::scalar(r#"[Some("A"), None, Some("B")]"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_lists_of_non_null_to_be_null() {
+#[tokio::test]
+async fn allow_lists_of_non_null_to_be_null() {
     run_variable_query(
         r#"query q($input: [String!]) { listNn(input: $input) }"#,
         vec![("input".to_owned(), InputValue::null())]
@@ -680,11 +781,12 @@ fn allow_lists_of_non_null_to_be_null() {
                 Some(&Value::scalar(r#"None"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn allow_lists_of_non_null_to_contain_values() {
+#[tokio::test]
+async fn allow_lists_of_non_null_to_contain_values() {
     run_variable_query(
         r#"query q($input: [String!]) { listNn(input: $input) }"#,
         vec![(
@@ -699,12 +801,17 @@ fn allow_lists_of_non_null_to_contain_values() {
                 Some(&Value::scalar(r#"Some(["A"])"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn does_not_allow_lists_of_non_null_to_contain_null() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_lists_of_non_null_to_contain_null() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($input: [String!]) { listNn(input: $input) }"#;
     let vars = vec![(
@@ -718,19 +825,26 @@ fn does_not_allow_lists_of_non_null_to_contain_null() {
     .into_iter()
     .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
-    assert_eq!(error, ValidationError(vec![
-        RuleError::new(
+    assert_eq!(
+        error,
+        ValidationError(vec![RuleError::new(
             r#"Variable "$input" got invalid value. In element #1: Expected "String!", found null."#,
             &[SourcePosition::new(8, 0, 8)],
-        ),
-    ]));
+        ),])
+    );
 }
 
-#[test]
-fn does_not_allow_non_null_lists_of_non_null_to_contain_null() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_non_null_lists_of_non_null_to_contain_null() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($input: [String!]!) { nnListNn(input: $input) }"#;
     let vars = vec![(
@@ -744,26 +858,35 @@ fn does_not_allow_non_null_lists_of_non_null_to_contain_null() {
     .into_iter()
     .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
-    assert_eq!(error, ValidationError(vec![
-        RuleError::new(
+    assert_eq!(
+        error,
+        ValidationError(vec![RuleError::new(
             r#"Variable "$input" got invalid value. In element #1: Expected "String!", found null."#,
             &[SourcePosition::new(8, 0, 8)],
-        ),
-    ]));
+        ),])
+    );
 }
 
-#[test]
-fn does_not_allow_non_null_lists_of_non_null_to_be_null() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_non_null_lists_of_non_null_to_be_null() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($input: [String!]!) { nnListNn(input: $input) }"#;
     let vars = vec![("value".to_owned(), InputValue::null())]
         .into_iter()
         .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -774,8 +897,8 @@ fn does_not_allow_non_null_lists_of_non_null_to_be_null() {
     );
 }
 
-#[test]
-fn allow_non_null_lists_of_non_null_to_contain_values() {
+#[tokio::test]
+async fn allow_non_null_lists_of_non_null_to_contain_values() {
     run_variable_query(
         r#"query q($input: [String!]!) { nnListNn(input: $input) }"#,
         vec![(
@@ -790,65 +913,23 @@ fn allow_non_null_lists_of_non_null_to_contain_values() {
                 Some(&Value::scalar(r#"["A"]"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn does_not_allow_invalid_types_to_be_used_as_values() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
-
-    let query = r#"query q($input: TestType!) { fieldWithObjectInput(input: $input) }"#;
-    let vars = vec![(
-        "value".to_owned(),
-        InputValue::list(vec![InputValue::scalar("A"), InputValue::scalar("B")]),
-    )]
-    .into_iter()
-    .collect();
-
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
-
-    assert_eq!(error, ValidationError(vec![
-        RuleError::new(
-            r#"Variable "$input" expected value of type "TestType!" which cannot be used as an input type."#,
-            &[SourcePosition::new(8, 0, 8)],
-        ),
-    ]));
-}
-
-#[test]
-fn does_not_allow_unknown_types_to_be_used_as_values() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
-
-    let query = r#"query q($input: UnknownType!) { fieldWithObjectInput(input: $input) }"#;
-    let vars = vec![(
-        "value".to_owned(),
-        InputValue::list(vec![InputValue::scalar("A"), InputValue::scalar("B")]),
-    )]
-    .into_iter()
-    .collect();
-
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
-
-    assert_eq!(error, ValidationError(vec![
-        RuleError::new(
-            r#"Variable "$input" expected value of type "UnknownType!" which cannot be used as an input type."#,
-            &[SourcePosition::new(8, 0, 8)],
-        ),
-    ]));
-}
-
-#[test]
-fn default_argument_when_not_provided() {
+#[tokio::test]
+async fn default_argument_when_not_provided() {
     run_query(r#"{ fieldWithDefaultArgumentValue }"#, |result| {
         assert_eq!(
             result.get_field_value("fieldWithDefaultArgumentValue"),
             Some(&Value::scalar(r#""Hello World""#))
         );
-    });
+    })
+    .await;
 }
 
-#[test]
-fn default_argument_when_nullable_variable_not_provided() {
+#[tokio::test]
+async fn default_argument_when_nullable_variable_not_provided() {
     run_query(
         r#"query q($input: String) { fieldWithDefaultArgumentValue(input: $input) }"#,
         |result| {
@@ -857,11 +938,12 @@ fn default_argument_when_nullable_variable_not_provided() {
                 Some(&Value::scalar(r#""Hello World""#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn default_argument_when_nullable_variable_set_to_null() {
+#[tokio::test]
+async fn default_argument_when_nullable_variable_set_to_null() {
     run_variable_query(
         r#"query q($input: String) { fieldWithDefaultArgumentValue(input: $input) }"#,
         vec![("input".to_owned(), InputValue::null())]
@@ -873,28 +955,31 @@ fn default_argument_when_nullable_variable_set_to_null() {
                 Some(&Value::scalar(r#""Hello World""#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn nullable_input_object_arguments_successful_without_variables() {
+#[tokio::test]
+async fn nullable_input_object_arguments_successful_without_variables() {
     run_query(r#"{ exampleInput(arg: {a: "abc", b: 123}) }"#, |result| {
         assert_eq!(
             result.get_field_value("exampleInput"),
             Some(&Value::scalar(r#"a: Some("abc"), b: 123"#))
         );
-    });
+    })
+    .await;
 
     run_query(r#"{ exampleInput(arg: {a: null, b: 1}) }"#, |result| {
         assert_eq!(
             result.get_field_value("exampleInput"),
             Some(&Value::scalar(r#"a: None, b: 1"#))
         );
-    });
+    })
+    .await;
 }
 
-#[test]
-fn nullable_input_object_arguments_successful_with_variables() {
+#[tokio::test]
+async fn nullable_input_object_arguments_successful_with_variables() {
     run_variable_query(
         r#"query q($var: Int!) { exampleInput(arg: {b: $var}) }"#,
         vec![("var".to_owned(), InputValue::scalar(123))]
@@ -906,7 +991,8 @@ fn nullable_input_object_arguments_successful_with_variables() {
                 Some(&Value::scalar(r#"a: None, b: 123"#))
             );
         },
-    );
+    )
+    .await;
 
     run_variable_query(
         r#"query q($var: String) { exampleInput(arg: {a: $var, b: 1}) }"#,
@@ -919,7 +1005,8 @@ fn nullable_input_object_arguments_successful_with_variables() {
                 Some(&Value::scalar(r#"a: None, b: 1"#))
             );
         },
-    );
+    )
+    .await;
 
     run_variable_query(
         r#"query q($var: String) { exampleInput(arg: {a: $var, b: 1}) }"#,
@@ -930,17 +1017,24 @@ fn nullable_input_object_arguments_successful_with_variables() {
                 Some(&Value::scalar(r#"a: None, b: 1"#))
             );
         },
-    );
+    )
+    .await;
 }
 
-#[test]
-fn does_not_allow_missing_required_field() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_missing_required_field() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"{ exampleInput(arg: {a: "abc"}) }"#;
     let vars = vec![].into_iter().collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -951,14 +1045,20 @@ fn does_not_allow_missing_required_field() {
     );
 }
 
-#[test]
-fn does_not_allow_null_in_required_field() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_null_in_required_field() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"{ exampleInput(arg: {a: "abc", b: null}) }"#;
     let vars = vec![].into_iter().collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -969,14 +1069,20 @@ fn does_not_allow_null_in_required_field() {
     );
 }
 
-#[test]
-fn does_not_allow_missing_variable_for_required_field() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_missing_variable_for_required_field() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($var: Int!) { exampleInput(arg: {b: $var}) }"#;
     let vars = vec![].into_iter().collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -987,16 +1093,22 @@ fn does_not_allow_missing_variable_for_required_field() {
     );
 }
 
-#[test]
-fn does_not_allow_null_variable_for_required_field() {
-    let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+#[tokio::test]
+async fn does_not_allow_null_variable_for_required_field() {
+    let schema = RootNode::new(
+        TestType,
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
     let query = r#"query q($var: Int!) { exampleInput(arg: {b: $var}) }"#;
     let vars = vec![("var".to_owned(), InputValue::null())]
         .into_iter()
         .collect();
 
-    let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+    let error = crate::execute(query, None, &schema, &vars, &())
+        .await
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -1007,14 +1119,15 @@ fn does_not_allow_null_variable_for_required_field() {
     );
 }
 
-#[test]
-fn input_object_with_default_values() {
+#[tokio::test]
+async fn input_object_with_default_values() {
     run_query(r#"{ inputWithDefaults(arg: {a: 1}) }"#, |result| {
         assert_eq!(
             result.get_field_value("inputWithDefaults"),
             Some(&Value::scalar(r#"a: 1"#))
         );
-    });
+    })
+    .await;
 
     run_variable_query(
         r#"query q($var: Int!) { inputWithDefaults(arg: {a: $var}) }"#,
@@ -1027,7 +1140,8 @@ fn input_object_with_default_values() {
                 Some(&Value::scalar(r#"a: 1"#))
             );
         },
-    );
+    )
+    .await;
 
     run_variable_query(
         r#"query q($var: Int = 1) { inputWithDefaults(arg: {a: $var}) }"#,
@@ -1038,7 +1152,8 @@ fn input_object_with_default_values() {
                 Some(&Value::scalar(r#"a: 1"#))
             );
         },
-    );
+    )
+    .await;
 
     run_variable_query(
         r#"query q($var: Int = 1) { inputWithDefaults(arg: {a: $var}) }"#,
@@ -1051,14 +1166,15 @@ fn input_object_with_default_values() {
                 Some(&Value::scalar(r#"a: 2"#))
             );
         },
-    );
+    )
+    .await;
 }
 
 mod integers {
     use super::*;
 
-    #[test]
-    fn positive_and_negative_should_work() {
+    #[tokio::test]
+    async fn positive_and_negative_should_work() {
         run_variable_query(
             r#"query q($var: Int!) { integerInput(value: $var) }"#,
             vec![("var".to_owned(), InputValue::scalar(1))]
@@ -1070,7 +1186,8 @@ mod integers {
                     Some(&Value::scalar(r#"value: 1"#))
                 );
             },
-        );
+        )
+        .await;
 
         run_variable_query(
             r#"query q($var: Int!) { integerInput(value: $var) }"#,
@@ -1083,19 +1200,26 @@ mod integers {
                     Some(&Value::scalar(r#"value: -1"#))
                 );
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn does_not_coerce_from_float() {
-        let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+    #[tokio::test]
+    async fn does_not_coerce_from_float() {
+        let schema = RootNode::new(
+            TestType,
+            EmptyMutation::<()>::new(),
+            EmptySubscription::<()>::new(),
+        );
 
         let query = r#"query q($var: Int!) { integerInput(value: $var) }"#;
         let vars = vec![("var".to_owned(), InputValue::scalar(10.0))]
             .into_iter()
             .collect();
 
-        let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+        let error = crate::execute(query, None, &schema, &vars, &())
+            .await
+            .unwrap_err();
 
         assert_eq!(
             error,
@@ -1106,16 +1230,22 @@ mod integers {
         );
     }
 
-    #[test]
-    fn does_not_coerce_from_string() {
-        let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+    #[tokio::test]
+    async fn does_not_coerce_from_string() {
+        let schema = RootNode::new(
+            TestType,
+            EmptyMutation::<()>::new(),
+            EmptySubscription::<()>::new(),
+        );
 
         let query = r#"query q($var: Int!) { integerInput(value: $var) }"#;
         let vars = vec![("var".to_owned(), InputValue::scalar("10"))]
             .into_iter()
             .collect();
 
-        let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+        let error = crate::execute(query, None, &schema, &vars, &())
+            .await
+            .unwrap_err();
 
         assert_eq!(
             error,
@@ -1130,8 +1260,8 @@ mod integers {
 mod floats {
     use super::*;
 
-    #[test]
-    fn float_values_should_work() {
+    #[tokio::test]
+    async fn float_values_should_work() {
         run_variable_query(
             r#"query q($var: Float!) { floatInput(value: $var) }"#,
             vec![("var".to_owned(), InputValue::scalar(10.0))]
@@ -1143,11 +1273,12 @@ mod floats {
                     Some(&Value::scalar(r#"value: 10"#))
                 );
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn coercion_from_integers_should_work() {
+    #[tokio::test]
+    async fn coercion_from_integers_should_work() {
         run_variable_query(
             r#"query q($var: Float!) { floatInput(value: $var) }"#,
             vec![("var".to_owned(), InputValue::scalar(-1))]
@@ -1159,19 +1290,26 @@ mod floats {
                     Some(&Value::scalar(r#"value: -1"#))
                 );
             },
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn does_not_coerce_from_string() {
-        let schema = RootNode::new(TestType, EmptyMutation::<()>::new());
+    #[tokio::test]
+    async fn does_not_coerce_from_string() {
+        let schema = RootNode::new(
+            TestType,
+            EmptyMutation::<()>::new(),
+            EmptySubscription::<()>::new(),
+        );
 
         let query = r#"query q($var: Float!) { floatInput(value: $var) }"#;
         let vars = vec![("var".to_owned(), InputValue::scalar("10"))]
             .into_iter()
             .collect();
 
-        let error = ::execute(query, None, &schema, &vars, &()).unwrap_err();
+        let error = crate::execute(query, None, &schema, &vars, &())
+            .await
+            .unwrap_err();
 
         assert_eq!(
             error,

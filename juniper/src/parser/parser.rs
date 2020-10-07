@@ -1,7 +1,6 @@
-use std::fmt;
-use std::result::Result;
+use std::{fmt, result::Result};
 
-use parser::{Lexer, LexerError, Spanning, Token};
+use crate::parser::{Lexer, LexerError, Spanning, Token};
 
 /// Error while parsing a GraphQL query
 #[derive(Debug, PartialEq)]
@@ -14,6 +13,9 @@ pub enum ParseError<'a> {
 
     /// An error during tokenization occurred
     LexerError(LexerError),
+
+    /// A scalar of unexpected type occurred in the source
+    ExpectedScalarError(&'static str),
 }
 
 #[doc(hidden)]
@@ -43,7 +45,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(Parser { tokens: tokens })
+        Ok(Parser { tokens })
     }
 
     #[doc(hidden)]
@@ -52,11 +54,11 @@ impl<'a> Parser<'a> {
     }
 
     #[doc(hidden)]
-    pub fn next(&mut self) -> ParseResult<'a, Token<'a>> {
+    pub fn next_token(&mut self) -> ParseResult<'a, Token<'a>> {
         if self.tokens.len() == 1 {
             Err(Spanning::start_end(
-                &self.peek().start.clone(),
-                &self.peek().end.clone(),
+                &self.peek().start,
+                &self.peek().end,
                 ParseError::UnexpectedEndOfFile,
             ))
         } else {
@@ -67,9 +69,9 @@ impl<'a> Parser<'a> {
     #[doc(hidden)]
     pub fn expect(&mut self, expected: &Token) -> ParseResult<'a, Token<'a>> {
         if &self.peek().item != expected {
-            Err(self.next()?.map(ParseError::UnexpectedToken))
+            Err(self.next_token()?.map(ParseError::UnexpectedToken))
         } else {
-            self.next()
+            self.next_token()
         }
     }
 
@@ -79,7 +81,7 @@ impl<'a> Parser<'a> {
         expected: &Token,
     ) -> Result<Option<Spanning<Token<'a>>>, Spanning<ParseError<'a>>> {
         if &self.peek().item == expected {
-            Ok(Some(self.next()?))
+            Ok(Some(self.next_token()?))
         } else if self.peek().item == Token::EndOfFile {
             Err(Spanning::zero_width(
                 &self.peek().start,
@@ -171,7 +173,7 @@ impl<'a> Parser<'a> {
             Spanning {
                 item: Token::Name(_),
                 ..
-            } => Ok(self.next()?.map(|token| {
+            } => Ok(self.next_token()?.map(|token| {
                 if let Token::Name(name) = token {
                     name
                 } else {
@@ -186,7 +188,7 @@ impl<'a> Parser<'a> {
                 &self.peek().end,
                 ParseError::UnexpectedEndOfFile,
             )),
-            _ => Err(self.next()?.map(ParseError::UnexpectedToken)),
+            _ => Err(self.next_token()?.map(ParseError::UnexpectedToken)),
         }
     }
 }
@@ -197,6 +199,9 @@ impl<'a> fmt::Display for ParseError<'a> {
             ParseError::UnexpectedToken(ref token) => write!(f, "Unexpected \"{}\"", token),
             ParseError::UnexpectedEndOfFile => write!(f, "Unexpected end of input"),
             ParseError::LexerError(ref err) => err.fmt(f),
+            ParseError::ExpectedScalarError(err) => err.fmt(f),
         }
     }
 }
+
+impl<'a> std::error::Error for ParseError<'a> {}

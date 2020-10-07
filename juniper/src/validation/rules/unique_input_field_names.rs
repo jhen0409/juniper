@@ -1,9 +1,11 @@
 use std::collections::hash_map::{Entry, HashMap};
 
-use ast::InputValue;
-use parser::{SourcePosition, Spanning};
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::InputValue,
+    parser::{SourcePosition, Spanning},
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 pub struct UniqueInputFieldNames<'a> {
     known_name_stack: Vec<HashMap<&'a str, SourcePosition>>,
@@ -45,11 +47,11 @@ where
                 Entry::Occupied(e) => {
                     ctx.report_error(
                         &error_message(&field_name.item),
-                        &[e.get().clone(), field_name.start.clone()],
+                        &[*e.get(), field_name.start],
                     );
                 }
                 Entry::Vacant(e) => {
-                    e.insert(field_name.start.clone());
+                    e.insert(field_name.start);
                 }
             }
         }
@@ -64,9 +66,11 @@ fn error_message(field_name: &str) -> String {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn input_object_with_fields() {
@@ -170,5 +174,4 @@ mod tests {
             ],
         );
     }
-
 }

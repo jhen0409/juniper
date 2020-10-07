@@ -1,9 +1,11 @@
-use ast::{Directive, Field, InputValue};
-use parser::Spanning;
-use schema::meta::Argument;
+use crate::{
+    ast::{Directive, Field, InputValue},
+    parser::Spanning,
+    schema::meta::Argument,
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 use std::fmt::Debug;
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
 
 #[derive(Debug)]
 enum ArgumentPosition<'a> {
@@ -82,7 +84,7 @@ where
                     }
                 };
 
-                ctx.report_error(&message, &[arg_name.start.clone()]);
+                ctx.report_error(&message, &[arg_name.start]);
             }
         }
     }
@@ -106,9 +108,11 @@ fn directive_error_message(arg_name: &str, directive_name: &str) -> String {
 mod tests {
     use super::{directive_error_message, factory, field_error_message};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn single_arg_is_known() {

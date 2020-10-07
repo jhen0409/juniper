@@ -1,7 +1,10 @@
-use executor::Variables;
-use schema::model::RootNode;
-use types::scalars::EmptyMutation;
-use value::{DefaultScalarValue, Object, Value};
+use crate::{
+    executor::Variables,
+    schema::model::RootNode,
+    types::scalars::{EmptyMutation, EmptySubscription},
+    value::{DefaultScalarValue, Object, Value},
+    GraphQLEnum,
+};
 
 /*
 
@@ -15,33 +18,33 @@ Syntax to validate:
 
 */
 
-#[derive(GraphQLEnumInternal)]
+#[derive(GraphQLEnum)]
 enum DefaultName {
     Foo,
     Bar,
 }
 
-#[derive(GraphQLEnumInternal)]
+#[derive(GraphQLEnum)]
 #[graphql(name = "ANamedEnum")]
 enum Named {
     Foo,
     Bar,
 }
 
-#[derive(GraphQLEnumInternal)]
+#[derive(GraphQLEnum)]
 enum NoTrailingComma {
     Foo,
     Bar,
 }
 
-#[derive(GraphQLEnumInternal)]
+#[derive(GraphQLEnum)]
 #[graphql(description = "A description of the enum itself")]
 enum EnumDescription {
     Foo,
     Bar,
 }
 
-#[derive(GraphQLEnumInternal)]
+#[derive(GraphQLEnum)]
 enum EnumValueDescription {
     #[graphql(description = "The FOO value")]
     Foo,
@@ -49,7 +52,7 @@ enum EnumValueDescription {
     Bar,
 }
 
-#[derive(GraphQLEnumInternal)]
+#[derive(GraphQLEnum)]
 enum EnumDeprecation {
     #[graphql(deprecated = "Please don't use FOO any more")]
     Foo,
@@ -62,23 +65,41 @@ enum EnumDeprecation {
 
 struct Root;
 
-graphql_object!(Root: () |&self| {
-    field default_name() -> DefaultName { DefaultName::Foo }
-    field named() -> Named { Named::Foo }
-    field no_trailing_comma() -> NoTrailingComma { NoTrailingComma::Foo }
-    field enum_description() -> EnumDescription { EnumDescription::Foo }
-    field enum_value_description() -> EnumValueDescription { EnumValueDescription::Foo }
-    field enum_deprecation() -> EnumDeprecation { EnumDeprecation::Foo }
-});
+#[crate::graphql_object]
+impl Root {
+    fn default_name() -> DefaultName {
+        DefaultName::Foo
+    }
+    fn named() -> Named {
+        Named::Foo
+    }
+    fn no_trailing_comma() -> NoTrailingComma {
+        NoTrailingComma::Foo
+    }
+    fn enum_description() -> EnumDescription {
+        EnumDescription::Foo
+    }
+    fn enum_value_description() -> EnumValueDescription {
+        EnumValueDescription::Foo
+    }
+    fn enum_deprecation() -> EnumDeprecation {
+        EnumDeprecation::Foo
+    }
+}
 
-fn run_type_info_query<F>(doc: &str, f: F)
+async fn run_type_info_query<F>(doc: &str, f: F)
 where
     F: Fn((&Object<DefaultScalarValue>, &Vec<Value<DefaultScalarValue>>)) -> (),
 {
-    let schema = RootNode::new(Root {}, EmptyMutation::<()>::new());
+    let schema = RootNode::new(
+        Root {},
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
 
-    let (result, errs) =
-        ::execute(doc, None, &schema, &Variables::new(), &()).expect("Execution failed");
+    let (result, errs) = crate::execute(doc, None, &schema, &Variables::new(), &())
+        .await
+        .expect("Execution failed");
 
     assert_eq!(errs, []);
 
@@ -101,8 +122,8 @@ where
     f((type_info, values));
 }
 
-#[test]
-fn default_name_introspection() {
+#[tokio::test]
+async fn default_name_introspection() {
     let doc = r#"
     {
         __type(name: "DefaultName") {
@@ -151,11 +172,12 @@ fn default_name_introspection() {
             .into_iter()
             .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn named_introspection() {
+#[tokio::test]
+async fn named_introspection() {
     let doc = r#"
     {
         __type(name: "ANamedEnum") {
@@ -204,11 +226,12 @@ fn named_introspection() {
             .into_iter()
             .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn no_trailing_comma_introspection() {
+#[tokio::test]
+async fn no_trailing_comma_introspection() {
     let doc = r#"
     {
         __type(name: "NoTrailingComma") {
@@ -257,11 +280,12 @@ fn no_trailing_comma_introspection() {
             .into_iter()
             .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn enum_description_introspection() {
+#[tokio::test]
+async fn enum_description_introspection() {
     let doc = r#"
     {
         __type(name: "EnumDescription") {
@@ -310,11 +334,12 @@ fn enum_description_introspection() {
             .into_iter()
             .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn enum_value_description_introspection() {
+#[tokio::test]
+async fn enum_value_description_introspection() {
     let doc = r#"
     {
         __type(name: "EnumValueDescription") {
@@ -363,11 +388,12 @@ fn enum_value_description_introspection() {
             .into_iter()
             .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn enum_deprecation_introspection() {
+#[tokio::test]
+async fn enum_deprecation_introspection() {
     let doc = r#"
     {
         __type(name: "EnumDeprecation") {
@@ -422,11 +448,12 @@ fn enum_deprecation_introspection() {
             .into_iter()
             .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn enum_deprecation_no_values_introspection() {
+#[tokio::test]
+async fn enum_deprecation_no_values_introspection() {
     let doc = r#"
     {
         __type(name: "EnumDeprecation") {
@@ -453,5 +480,6 @@ fn enum_deprecation_no_values_introspection() {
         );
 
         assert_eq!(values.len(), 0);
-    });
+    })
+    .await;
 }

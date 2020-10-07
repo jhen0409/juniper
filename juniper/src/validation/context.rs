@@ -1,12 +1,13 @@
-use std::collections::HashSet;
-use std::fmt::Debug;
+use std::{
+    collections::HashSet,
+    fmt::{self, Debug},
+};
 
-use ast::{Definition, Document, Type};
+use crate::ast::{Definition, Document, Type};
 
-use schema::meta::MetaType;
-use schema::model::SchemaType;
+use crate::schema::{meta::MetaType, model::SchemaType};
 
-use parser::SourcePosition;
+use crate::parser::SourcePosition;
 
 /// Query validation error
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,12 +51,27 @@ impl RuleError {
     }
 }
 
+impl fmt::Display for RuleError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // this is fine since all `RuleError`s should have at least one source position
+        let locations = self
+            .locations
+            .iter()
+            .map(|location| format!("{}", location))
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "{}. At {}", self.message, locations)
+    }
+}
+
+impl std::error::Error for RuleError {}
+
 impl<'a, S: Debug> ValidatorContext<'a, S> {
     #[doc(hidden)]
     pub fn new(schema: &'a SchemaType<S>, document: &Document<'a, S>) -> ValidatorContext<'a, S> {
         ValidatorContext {
             errors: Vec::new(),
-            schema: schema,
+            schema,
             type_stack: Vec::new(),
             type_literal_stack: Vec::new(),
             parent_type_stack: Vec::new(),

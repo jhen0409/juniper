@@ -1,15 +1,15 @@
-#[cfg(test)]
 use fnv::FnvHashMap;
 
-use juniper::{self, FromInputValue, GraphQLType, InputValue, ToInputValue};
-
-use juniper::DefaultScalarValue;
+use juniper::{
+    marker, DefaultScalarValue, FromInputValue, GraphQLInputObject, GraphQLType, GraphQLValue,
+    InputValue, ToInputValue,
+};
 
 #[derive(GraphQLInputObject, Debug, PartialEq)]
 #[graphql(
     name = "MyInput",
     description = "input descr",
-    scalar = "DefaultScalarValue"
+    scalar = DefaultScalarValue
 )]
 struct Input {
     regular_field: String,
@@ -27,7 +27,7 @@ struct DocComment {
     regular_field: bool,
 }
 
-/// Doc 1.
+/// Doc 1.\
 /// Doc 2.
 ///
 /// Doc 4.
@@ -50,6 +50,8 @@ struct OverrideDocComment {
 #[derive(Debug, PartialEq)]
 struct Fake;
 
+impl<'a> marker::IsInputType<DefaultScalarValue> for &'a Fake {}
+
 impl<'a> FromInputValue for &'a Fake {
     fn from_input_value(_v: &InputValue) -> Option<&'a Fake> {
         None
@@ -62,10 +64,7 @@ impl<'a> ToInputValue for &'a Fake {
     }
 }
 
-impl<'a> GraphQLType for &'a Fake {
-    type Context = ();
-    type TypeInfo = ();
-
+impl<'a> GraphQLType<DefaultScalarValue> for &'a Fake {
     fn name(_: &()) -> Option<&'static str> {
         None
     }
@@ -85,15 +84,27 @@ impl<'a> GraphQLType for &'a Fake {
     }
 }
 
+impl<'a> GraphQLValue<DefaultScalarValue> for &'a Fake {
+    type Context = ();
+    type TypeInfo = ();
+
+    fn type_name<'i>(&self, info: &'i Self::TypeInfo) -> Option<&'i str> {
+        <Self as GraphQLType>::name(info)
+    }
+}
+
 #[derive(GraphQLInputObject, Debug, PartialEq)]
-#[graphql(scalar = "DefaultScalarValue")]
+#[graphql(scalar = DefaultScalarValue)]
 struct WithLifetime<'a> {
     regular_field: &'a Fake,
 }
 
 #[test]
 fn test_derived_input_object() {
-    assert_eq!(<Input as GraphQLType>::name(&()), Some("MyInput"));
+    assert_eq!(
+        <Input as GraphQLType<DefaultScalarValue>>::name(&()),
+        Some("MyInput")
+    );
 
     // Validate meta info.
     let mut registry: juniper::Registry = juniper::Registry::new(FnvHashMap::default());
@@ -103,7 +114,7 @@ fn test_derived_input_object() {
 
     // Test default value injection.
 
-    let input_no_defaults: InputValue = ::serde_json::from_value(json!({
+    let input_no_defaults: InputValue = ::serde_json::from_value(serde_json::json!({
         "regularField": "a",
     }))
     .unwrap();
@@ -120,7 +131,7 @@ fn test_derived_input_object() {
 
     // Test with all values supplied.
 
-    let input: InputValue = ::serde_json::from_value(json!({
+    let input: InputValue = ::serde_json::from_value(serde_json::json!({
         "regularField": "a",
         "haha": 55,
         "other": true,
@@ -151,7 +162,7 @@ fn test_multi_doc_comment() {
     let meta = MultiDocComment::meta(&(), &mut registry);
     assert_eq!(
         meta.description(),
-        Some(&"Doc 1. Doc 2.\nDoc 4.".to_string())
+        Some(&"Doc 1. Doc 2.\n\nDoc 4.".to_string())
     );
 }
 

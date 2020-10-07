@@ -1,10 +1,3 @@
-use std::marker::PhantomData;
-
-use ast::InputValue;
-use schema::model::RootNode;
-use types::scalars::EmptyMutation;
-use value::{DefaultScalarValue, Object, Value};
-
 /*
 
 Syntax to validate:
@@ -14,101 +7,95 @@ Syntax to validate:
 * Custom name vs. default name
 * Optional commas between items
 * Optional trailing commas on instance resolvers
+*
+*/
 
- */
+use std::marker::PhantomData;
+
+use crate::{
+    ast::InputValue,
+    graphql_object,
+    schema::model::RootNode,
+    types::scalars::{EmptyMutation, EmptySubscription},
+    value::{DefaultScalarValue, Object, Value},
+    GraphQLUnion,
+};
 
 struct Concrete;
 
+#[graphql_object]
+impl Concrete {
+    fn simple() -> i32 {
+        123
+    }
+}
+
+#[derive(GraphQLUnion)]
+#[graphql(name = "ACustomNamedUnion", scalar = DefaultScalarValue)]
 enum CustomName {
     Concrete(Concrete),
 }
 
+#[derive(GraphQLUnion)]
+#[graphql(on Concrete = WithLifetime::resolve, scalar = DefaultScalarValue)]
 enum WithLifetime<'a> {
+    #[graphql(ignore)]
     Int(PhantomData<&'a i32>),
 }
+
+impl<'a> WithLifetime<'a> {
+    fn resolve(&self, _: &()) -> Option<&Concrete> {
+        if matches!(self, Self::Int(_)) {
+            Some(&Concrete)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(GraphQLUnion)]
+#[graphql(on Concrete = WithGenerics::resolve, scalar = DefaultScalarValue)]
 enum WithGenerics<T> {
+    #[graphql(ignore)]
     Generic(T),
 }
 
-enum DescriptionFirst {
-    Concrete(Concrete),
-}
-enum ResolversFirst {
-    Concrete(Concrete),
+impl<T> WithGenerics<T> {
+    fn resolve(&self, _: &()) -> Option<&Concrete> {
+        if matches!(self, Self::Generic(_)) {
+            Some(&Concrete)
+        } else {
+            None
+        }
+    }
 }
 
-enum CommasWithTrailing {
-    Concrete(Concrete),
-}
-enum ResolversWithTrailingComma {
+#[derive(GraphQLUnion)]
+#[graphql(description = "A description", scalar = DefaultScalarValue)]
+enum DescriptionFirst {
     Concrete(Concrete),
 }
 
 struct Root;
 
-graphql_object!(Concrete: () |&self| {
-    field simple() -> i32 { 123 }
-});
-
-graphql_union!(CustomName: () as "ACustomNamedUnion" |&self| {
-    instance_resolvers: |&_| {
-        &Concrete => match *self { CustomName::Concrete(ref c) => Some(c) }
+// FIXME: make async work
+#[crate::graphql_object(noasync)]
+impl<'a> Root {
+    fn custom_name() -> CustomName {
+        CustomName::Concrete(Concrete)
     }
-});
-
-graphql_union!(<'a> WithLifetime<'a>: () as "WithLifetime" |&self| {
-    instance_resolvers: |&_| {
-        Concrete => match *self { WithLifetime::Int(_) => Some(Concrete) }
+    fn with_lifetime() -> WithLifetime<'a> {
+        WithLifetime::Int(PhantomData)
     }
-});
-
-graphql_union!(<T> WithGenerics<T>: () as "WithGenerics" |&self| {
-    instance_resolvers: |&_| {
-        Concrete => match *self { WithGenerics::Generic(_) => Some(Concrete) }
+    fn with_generics() -> WithGenerics<i32> {
+        WithGenerics::Generic(123)
     }
-});
-
-graphql_union!(DescriptionFirst: () |&self| {
-    description: "A description"
-    instance_resolvers: |&_| {
-        &Concrete => match *self { DescriptionFirst::Concrete(ref c) => Some(c) }
+    fn description_first() -> DescriptionFirst {
+        DescriptionFirst::Concrete(Concrete)
     }
-});
+}
 
-graphql_union!(ResolversFirst: () |&self| {
-    instance_resolvers: |&_| {
-        &Concrete => match *self { ResolversFirst::Concrete(ref c) => Some(c) }
-    }
-    description: "A description"
-});
-
-graphql_union!(CommasWithTrailing: () |&self| {
-    instance_resolvers: |&_| {
-        &Concrete => match *self { CommasWithTrailing::Concrete(ref c) => Some(c) }
-    },
-    description: "A description",
-});
-
-graphql_union!(ResolversWithTrailingComma: () |&self| {
-    instance_resolvers: |&_| {
-        &Concrete => match *self { ResolversWithTrailingComma::Concrete(ref c) => Some(c) },
-    }
-    description: "A description"
-});
-
-graphql_object!(<'a> Root: () as "Root" |&self| {
-    field custom_name() -> CustomName { CustomName::Concrete(Concrete) }
-    field with_lifetime() -> WithLifetime<'a> { WithLifetime::Int(PhantomData) }
-    field with_generics() -> WithGenerics<i32> { WithGenerics::Generic(123) }
-    field description_first() -> DescriptionFirst { DescriptionFirst::Concrete(Concrete) }
-    field resolvers_first() -> ResolversFirst { ResolversFirst::Concrete(Concrete) }
-    field commas_with_trailing() -> CommasWithTrailing { CommasWithTrailing::Concrete(Concrete) }
-    field resolvers_with_trailing_comma() -> ResolversWithTrailingComma {
-        ResolversWithTrailingComma::Concrete(Concrete)
-    }
-});
-
-fn run_type_info_query<F>(type_name: &str, f: F)
+async fn run_type_info_query<F>(type_name: &str, f: F)
 where
     F: Fn(&Object<DefaultScalarValue>, &Vec<Value<DefaultScalarValue>>) -> (),
 {
@@ -123,12 +110,18 @@ where
         }
     }
     "#;
-    let schema = RootNode::new(Root {}, EmptyMutation::<()>::new());
+    let schema = RootNode::new(
+        Root {},
+        EmptyMutation::<()>::new(),
+        EmptySubscription::<()>::new(),
+    );
     let vars = vec![("typeName".to_owned(), InputValue::scalar(type_name))]
         .into_iter()
         .collect();
 
-    let (result, errs) = ::execute(doc, None, &schema, &vars, &()).expect("Execution failed");
+    let (result, errs) = crate::execute(doc, None, &schema, &vars, &())
+        .await
+        .expect("Execution failed");
 
     assert_eq!(errs, []);
 
@@ -151,8 +144,8 @@ where
     f(type_info, possible_types);
 }
 
-#[test]
-fn introspect_custom_name() {
+#[tokio::test]
+async fn introspect_custom_name() {
     run_type_info_query("ACustomNamedUnion", |union, possible_types| {
         assert_eq!(
             union.get_field_value("name"),
@@ -165,11 +158,12 @@ fn introspect_custom_name() {
                 .into_iter()
                 .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn introspect_with_lifetime() {
+#[tokio::test]
+async fn introspect_with_lifetime() {
     run_type_info_query("WithLifetime", |union, possible_types| {
         assert_eq!(
             union.get_field_value("name"),
@@ -182,11 +176,12 @@ fn introspect_with_lifetime() {
                 .into_iter()
                 .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn introspect_with_generics() {
+#[tokio::test]
+async fn introspect_with_generics() {
     run_type_info_query("WithGenerics", |union, possible_types| {
         assert_eq!(
             union.get_field_value("name"),
@@ -199,11 +194,12 @@ fn introspect_with_generics() {
                 .into_iter()
                 .collect(),
         )));
-    });
+    })
+    .await;
 }
 
-#[test]
-fn introspect_description_first() {
+#[tokio::test]
+async fn introspect_description_first() {
     run_type_info_query("DescriptionFirst", |union, possible_types| {
         assert_eq!(
             union.get_field_value("name"),
@@ -219,65 +215,6 @@ fn introspect_description_first() {
                 .into_iter()
                 .collect(),
         )));
-    });
-}
-
-#[test]
-fn introspect_resolvers_first() {
-    run_type_info_query("ResolversFirst", |union, possible_types| {
-        assert_eq!(
-            union.get_field_value("name"),
-            Some(&Value::scalar("ResolversFirst"))
-        );
-        assert_eq!(
-            union.get_field_value("description"),
-            Some(&Value::scalar("A description"))
-        );
-
-        assert!(possible_types.contains(&Value::object(
-            vec![("name", Value::scalar("Concrete"))]
-                .into_iter()
-                .collect(),
-        )));
-    });
-}
-
-#[test]
-fn introspect_commas_with_trailing() {
-    run_type_info_query("CommasWithTrailing", |union, possible_types| {
-        assert_eq!(
-            union.get_field_value("name"),
-            Some(&Value::scalar("CommasWithTrailing"))
-        );
-        assert_eq!(
-            union.get_field_value("description"),
-            Some(&Value::scalar("A description"))
-        );
-
-        assert!(possible_types.contains(&Value::object(
-            vec![("name", Value::scalar("Concrete"))]
-                .into_iter()
-                .collect(),
-        )));
-    });
-}
-
-#[test]
-fn introspect_resolvers_with_trailing_comma() {
-    run_type_info_query("ResolversWithTrailingComma", |union, possible_types| {
-        assert_eq!(
-            union.get_field_value("name"),
-            Some(&Value::scalar("ResolversWithTrailingComma"))
-        );
-        assert_eq!(
-            union.get_field_value("description"),
-            Some(&Value::scalar("A description"))
-        );
-
-        assert!(possible_types.contains(&Value::object(
-            vec![("name", Value::scalar("Concrete"))]
-                .into_iter()
-                .collect(),
-        )));
-    });
+    })
+    .await;
 }

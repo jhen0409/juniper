@@ -1,5 +1,4 @@
-use std::iter::FromIterator;
-use std::vec::IntoIter;
+use std::{iter::FromIterator, vec::IntoIter};
 
 use super::Value;
 
@@ -49,22 +48,14 @@ impl<S> Object<S> {
     }
 
     /// Get a iterator over all field value pairs
-    ///
-    /// This method returns a iterator over `&'a (String, Value)`
-    // TODO: change this to `-> impl Iterator<Item = &(String, Value)>`
-    // as soon as juniper bumps the minimal supported rust verion to 1.26
-    pub fn iter(&self) -> FieldIter<S> {
+    pub fn iter(&self) -> impl Iterator<Item = &(String, Value<S>)> {
         FieldIter {
             inner: self.key_value_list.iter(),
         }
     }
 
     /// Get a iterator over all mutable field value pairs
-    ///
-    /// This method returns a iterator over `&mut 'a (String, Value)`
-    // TODO: change this to `-> impl Iterator<Item = &mut (String, Value)>`
-    // as soon as juniper bumps the minimal supported rust verion to 1.26
-    pub fn iter_mut(&mut self) -> FieldIterMut<S> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut (String, Value<S>)> {
         FieldIterMut {
             inner: self.key_value_list.iter_mut(),
         }
@@ -84,6 +75,17 @@ impl<S> Object<S> {
             .iter()
             .find(|&&(ref k, _)| (k as &str) == key)
             .map(|&(_, ref value)| value)
+    }
+
+    /// Recursively sort all keys by field.
+    pub fn sort_by_field(&mut self) {
+        self.key_value_list
+            .sort_by(|(key1, _), (key2, _)| key1.cmp(key2));
+        for (_, ref mut value) in &mut self.key_value_list {
+            if let Value::Object(ref mut o) = value {
+                o.sort_by_field();
+            }
+        }
     }
 }
 

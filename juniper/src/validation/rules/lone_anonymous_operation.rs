@@ -1,7 +1,9 @@
-use ast::{Definition, Document, Operation};
-use parser::Spanning;
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::{Definition, Document, Operation},
+    parser::Spanning,
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 pub struct LoneAnonymousOperation {
     operation_count: Option<usize>,
@@ -35,7 +37,7 @@ where
     ) {
         if let Some(operation_count) = self.operation_count {
             if operation_count > 1 && op.item.name.is_none() {
-                ctx.report_error(error_message(), &[op.start.clone()]);
+                ctx.report_error(error_message(), &[op.start]);
             }
         }
     }
@@ -49,9 +51,11 @@ fn error_message() -> &'static str {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn no_operations() {

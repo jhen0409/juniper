@@ -1,8 +1,10 @@
-use ast::VariableDefinition;
-use parser::Spanning;
-use types::utilities::is_valid_literal_value;
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::VariableDefinition,
+    parser::Spanning,
+    types::utilities::is_valid_literal_value,
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 pub struct DefaultValuesOfCorrectType;
 
@@ -28,7 +30,7 @@ where
             if var_def.var_type.item.is_non_null() {
                 ctx.report_error(
                     &non_null_error_message(var_name.item, &format!("{}", var_def.var_type.item)),
-                    &[start.clone()],
+                    &[*start],
                 )
             } else {
                 let meta_type = ctx.schema.make_type(&var_def.var_type.item);
@@ -36,7 +38,7 @@ where
                 if !is_valid_literal_value(ctx.schema, &meta_type, var_value) {
                     ctx.report_error(
                         &type_error_message(var_name.item, &format!("{}", var_def.var_type.item)),
-                        &[start.clone()],
+                        &[*start],
                     );
                 }
             }
@@ -62,9 +64,11 @@ fn non_null_error_message(arg_name: &str, type_name: &str) -> String {
 mod tests {
     use super::{factory, non_null_error_message, type_error_message};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn variables_with_no_default_values() {
@@ -189,5 +193,4 @@ mod tests {
             )],
         );
     }
-
 }

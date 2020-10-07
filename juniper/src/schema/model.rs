@@ -1,23 +1,34 @@
 use std::fmt;
 
 use fnv::FnvHashMap;
+#[cfg(feature = "graphql-parser-integration")]
+use graphql_parser::schema::Document;
 
-use ast::Type;
-use executor::{Context, Registry};
-use schema::meta::{Argument, InterfaceMeta, MetaType, ObjectMeta, PlaceholderMeta, UnionMeta};
-use types::base::GraphQLType;
-use types::name::Name;
-use value::{DefaultScalarValue, ScalarRefValue, ScalarValue};
+use crate::{
+    ast::Type,
+    executor::{Context, Registry},
+    schema::meta::{Argument, InterfaceMeta, MetaType, ObjectMeta, PlaceholderMeta, UnionMeta},
+    types::{base::GraphQLType, name::Name},
+    value::{DefaultScalarValue, ScalarValue},
+    GraphQLEnum,
+};
+
+#[cfg(feature = "graphql-parser-integration")]
+use crate::schema::translate::{graphql_parser::GraphQLParserTranslator, SchemaTranslator};
 
 /// Root query node of a schema
 ///
-/// This brings the mutation and query types together, and provides the
-/// predefined metadata fields.
+/// This brings the mutation, subscription and query types together,
+/// and provides the predefined metadata fields.
 #[derive(Debug)]
-pub struct RootNode<'a, QueryT: GraphQLType<S>, MutationT: GraphQLType<S>, S = DefaultScalarValue>
-where
+pub struct RootNode<
+    'a,
+    QueryT: GraphQLType<S>,
+    MutationT: GraphQLType<S>,
+    SubscriptionT: GraphQLType<S>,
+    S = DefaultScalarValue,
+> where
     S: ScalarValue,
-    for<'b> &'b S: ScalarRefValue<'b>,
 {
     #[doc(hidden)]
     pub query_type: QueryT,
@@ -28,6 +39,10 @@ where
     #[doc(hidden)]
     pub mutation_info: MutationT::TypeInfo,
     #[doc(hidden)]
+    pub subscription_type: SubscriptionT,
+    #[doc(hidden)]
+    pub subscription_info: SubscriptionT::TypeInfo,
+    #[doc(hidden)]
     pub schema: SchemaType<'a, S>,
 }
 
@@ -35,8 +50,9 @@ where
 #[derive(Debug)]
 pub struct SchemaType<'a, S> {
     pub(crate) types: FnvHashMap<Name, MetaType<'a, S>>,
-    query_type_name: String,
-    mutation_type_name: Option<String>,
+    pub(crate) query_type_name: String,
+    pub(crate) mutation_type_name: Option<String>,
+    pub(crate) subscription_type_name: Option<String>,
     directives: FnvHashMap<String, DirectiveType<'a, S>>,
 }
 
@@ -57,11 +73,12 @@ pub struct DirectiveType<'a, S> {
     pub arguments: Vec<Argument<'a, S>>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, GraphQLEnumInternal)]
-#[graphql(name = "__DirectiveLocation")]
+#[derive(Clone, PartialEq, Eq, Debug, GraphQLEnum)]
+#[graphql(name = "__DirectiveLocation", internal)]
 pub enum DirectiveLocation {
     Query,
     Mutation,
+    Subscription,
     Field,
     #[graphql(name = "FRAGMENT_DEFINITION")]
     FragmentDefinition,
@@ -71,31 +88,48 @@ pub enum DirectiveLocation {
     InlineFragment,
 }
 
-impl<'a, QueryT, MutationT, S> RootNode<'a, QueryT, MutationT, S>
+impl<'a, QueryT, MutationT, SubscriptionT, S> RootNode<'a, QueryT, MutationT, SubscriptionT, S>
 where
     S: ScalarValue + 'a,
     QueryT: GraphQLType<S, TypeInfo = ()>,
     MutationT: GraphQLType<S, TypeInfo = ()>,
-    for<'b> &'b S: ScalarRefValue<'b>,
+    SubscriptionT: GraphQLType<S, TypeInfo = ()>,
 {
-    /// Construct a new root node from query and mutation nodes
+    /// Construct a new root node from query, mutation, and subscription nodes
     ///
     /// If the schema should not support mutations, use the
     /// `new` constructor instead.
-    pub fn new(query_obj: QueryT, mutation_obj: MutationT) -> Self
-    where
-        for<'b> &'b S: ScalarRefValue<'b>,
-    {
-        RootNode::new_with_info(query_obj, mutation_obj, (), ())
+    pub fn new(
+        query_obj: QueryT,
+        mutation_obj: MutationT,
+        subscription_obj: SubscriptionT,
+    ) -> Self {
+        RootNode::new_with_info(query_obj, mutation_obj, subscription_obj, (), (), ())
+    }
+
+    #[cfg(feature = "schema-language")]
+    /// The schema definition as a `String` in the
+    /// [GraphQL Schema Language](https://graphql.org/learn/schema/#type-language)
+    /// format.
+    pub fn as_schema_language(&self) -> String {
+        let doc = self.as_parser_document();
+        format!("{}", doc)
+    }
+
+    #[cfg(feature = "graphql-parser-integration")]
+    /// The schema definition as a [`graphql_parser`](https://crates.io/crates/graphql-parser)
+    /// [`Document`](https://docs.rs/graphql-parser/latest/graphql_parser/schema/struct.Document.html).
+    pub fn as_parser_document(&'a self) -> Document<'a, &'a str> {
+        GraphQLParserTranslator::translate_schema(&self.schema)
     }
 }
 
-impl<'a, S, QueryT, MutationT> RootNode<'a, QueryT, MutationT, S>
+impl<'a, S, QueryT, MutationT, SubscriptionT> RootNode<'a, QueryT, MutationT, SubscriptionT, S>
 where
     QueryT: GraphQLType<S>,
     MutationT: GraphQLType<S>,
+    SubscriptionT: GraphQLType<S>,
     S: ScalarValue + 'a,
-    for<'b> &'b S: ScalarRefValue<'b>,
 {
     /// Construct a new root node from query and mutation nodes,
     /// while also providing type info objects for the query and
@@ -103,36 +137,44 @@ where
     pub fn new_with_info(
         query_obj: QueryT,
         mutation_obj: MutationT,
+        subscription_obj: SubscriptionT,
         query_info: QueryT::TypeInfo,
         mutation_info: MutationT::TypeInfo,
-    ) -> Self
-    where
-        for<'b> &'b S: ScalarRefValue<'b>,
-    {
+        subscription_info: SubscriptionT::TypeInfo,
+    ) -> Self {
         RootNode {
             query_type: query_obj,
             mutation_type: mutation_obj,
-            schema: SchemaType::new::<QueryT, MutationT>(&query_info, &mutation_info),
-            query_info: query_info,
-            mutation_info: mutation_info,
+            subscription_type: subscription_obj,
+            schema: SchemaType::new::<QueryT, MutationT, SubscriptionT>(
+                &query_info,
+                &mutation_info,
+                &subscription_info,
+            ),
+            query_info,
+            mutation_info,
+            subscription_info,
         }
     }
 }
 
 impl<'a, S> SchemaType<'a, S> {
-    pub fn new<QueryT, MutationT>(
+    /// Create a new schema.
+    pub fn new<QueryT, MutationT, SubscriptionT>(
         query_info: &QueryT::TypeInfo,
         mutation_info: &MutationT::TypeInfo,
+        subscription_info: &SubscriptionT::TypeInfo,
     ) -> Self
     where
         S: ScalarValue + 'a,
         QueryT: GraphQLType<S>,
         MutationT: GraphQLType<S>,
-        for<'b> &'b S: ScalarRefValue<'b>,
+        SubscriptionT: GraphQLType<S>,
     {
         let mut directives = FnvHashMap::default();
         let query_type_name: String;
         let mutation_type_name: String;
+        let subscription_type_name: String;
 
         let mut registry = Registry::new(FnvHashMap::default());
         query_type_name = registry
@@ -142,6 +184,11 @@ impl<'a, S> SchemaType<'a, S> {
 
         mutation_type_name = registry
             .get_type::<MutationT>(mutation_info)
+            .innermost_name()
+            .to_owned();
+
+        subscription_type_name = registry
+            .get_type::<SubscriptionT>(subscription_info)
             .innermost_name()
             .to_owned();
 
@@ -177,24 +224,32 @@ impl<'a, S> SchemaType<'a, S> {
         }
         SchemaType {
             types: registry.types,
-            query_type_name: query_type_name,
+            query_type_name,
             mutation_type_name: if &mutation_type_name != "_EmptyMutation" {
                 Some(mutation_type_name)
             } else {
                 None
             },
-            directives: directives,
+            subscription_type_name: if &subscription_type_name != "_EmptySubscription" {
+                Some(subscription_type_name)
+            } else {
+                None
+            },
+            directives,
         }
     }
 
+    /// Add a directive like `skip` or `include`.
     pub fn add_directive(&mut self, directive: DirectiveType<'a, S>) {
         self.directives.insert(directive.name.clone(), directive);
     }
 
+    /// Get a type by name.
     pub fn type_by_name(&self, name: &str) -> Option<TypeType<S>> {
         self.types.get(name).map(|t| TypeType::Concrete(t))
     }
 
+    /// Get a concrete type by name.
     pub fn concrete_type_by_name(&self, name: &str) -> Option<&MetaType<S>> {
         self.types.get(name)
     }
@@ -208,6 +263,7 @@ impl<'a, S> SchemaType<'a, S> {
         }
     }
 
+    /// Get the query type from the schema.
     pub fn query_type(&self) -> TypeType<S> {
         TypeType::Concrete(
             self.types
@@ -216,12 +272,14 @@ impl<'a, S> SchemaType<'a, S> {
         )
     }
 
+    /// Get the concrete query type from the schema.
     pub fn concrete_query_type(&self) -> &MetaType<S> {
         self.types
             .get(&self.query_type_name)
             .expect("Query type does not exist in schema")
     }
 
+    /// Get the mutation type from the schema.
     pub fn mutation_type(&self) -> Option<TypeType<S>> {
         if let Some(ref mutation_type_name) = self.mutation_type_name {
             Some(
@@ -233,6 +291,7 @@ impl<'a, S> SchemaType<'a, S> {
         }
     }
 
+    /// Get the concrete mutation type from the schema.
     pub fn concrete_mutation_type(&self) -> Option<&MetaType<S>> {
         self.mutation_type_name.as_ref().map(|name| {
             self.concrete_type_by_name(name)
@@ -240,14 +299,37 @@ impl<'a, S> SchemaType<'a, S> {
         })
     }
 
+    /// Get the subscription type.
+    pub fn subscription_type(&self) -> Option<TypeType<S>> {
+        if let Some(ref subscription_type_name) = self.subscription_type_name {
+            Some(
+                self.type_by_name(subscription_type_name)
+                    .expect("Subscription type does not exist in schema"),
+            )
+        } else {
+            None
+        }
+    }
+
+    /// Get the concrete subscription type.
+    pub fn concrete_subscription_type(&self) -> Option<&MetaType<S>> {
+        self.subscription_type_name.as_ref().map(|name| {
+            self.concrete_type_by_name(name)
+                .expect("Subscription type does not exist in schema")
+        })
+    }
+
+    /// Get a list of types.
     pub fn type_list(&self) -> Vec<TypeType<S>> {
         self.types.values().map(|t| TypeType::Concrete(t)).collect()
     }
 
+    /// Get a list of concrete types.
     pub fn concrete_type_list(&self) -> Vec<&MetaType<S>> {
         self.types.values().collect()
     }
 
+    /// Make a type.
     pub fn make_type(&self, t: &Type) -> TypeType<S> {
         match *t {
             Type::NonNullNamed(ref n) => TypeType::NonNull(Box::new(
@@ -261,14 +343,17 @@ impl<'a, S> SchemaType<'a, S> {
         }
     }
 
+    /// Get a list of directives.
     pub fn directive_list(&self) -> Vec<&DirectiveType<S>> {
         self.directives.values().collect()
     }
 
+    /// Get directive by name.
     pub fn directive_by_name(&self, name: &str) -> Option<&DirectiveType<S>> {
         self.directives.get(name)
     }
 
+    /// Determine if there is an overlap between types.
     pub fn type_overlap(&self, t1: &MetaType<S>, t2: &MetaType<S>) -> bool {
         if (t1 as *const MetaType<S>) == (t2 as *const MetaType<S>) {
             return true;
@@ -285,6 +370,7 @@ impl<'a, S> SchemaType<'a, S> {
         }
     }
 
+    /// A list of possible typeees for a given type.
     pub fn possible_types(&self, t: &MetaType<S>) -> Vec<&MetaType<S>> {
         match *t {
             MetaType::Union(UnionMeta {
@@ -308,6 +394,7 @@ impl<'a, S> SchemaType<'a, S> {
         }
     }
 
+    /// If the abstract type is possible.
     pub fn is_possible_type(
         &self,
         abstract_type: &MetaType<S>,
@@ -318,8 +405,9 @@ impl<'a, S> SchemaType<'a, S> {
             .any(|t| (t as *const MetaType<S>) == (possible_type as *const MetaType<S>))
     }
 
+    /// If the type is a subtype of another type.
     pub fn is_subtype<'b>(&self, sub_type: &Type<'b>, super_type: &Type<'b>) -> bool {
-        use ast::Type::*;
+        use crate::ast::Type::*;
 
         if super_type == sub_type {
             return true;
@@ -340,6 +428,7 @@ impl<'a, S> SchemaType<'a, S> {
         }
     }
 
+    /// If the type is a named subtype.
     pub fn is_named_subtype(&self, sub_type_name: &str, super_type_name: &str) -> bool {
         if sub_type_name == super_type_name {
             true
@@ -409,7 +498,6 @@ where
     fn new_skip(registry: &mut Registry<'a, S>) -> DirectiveType<'a, S>
     where
         S: ScalarValue,
-        for<'b> &'b S: ScalarRefValue<'b>,
     {
         Self::new(
             "skip",
@@ -425,7 +513,6 @@ where
     fn new_include(registry: &mut Registry<'a, S>) -> DirectiveType<'a, S>
     where
         S: ScalarValue,
-        for<'b> &'b S: ScalarRefValue<'b>,
     {
         Self::new(
             "include",
@@ -449,6 +536,7 @@ impl fmt::Display for DirectiveLocation {
         f.write_str(match *self {
             DirectiveLocation::Query => "query",
             DirectiveLocation::Mutation => "mutation",
+            DirectiveLocation::Subscription => "subscription",
             DirectiveLocation::Field => "field",
             DirectiveLocation::FragmentDefinition => "fragment definition",
             DirectiveLocation::FragmentSpread => "fragment spread",
@@ -463,6 +551,160 @@ impl<'a, S> fmt::Display for TypeType<'a, S> {
             TypeType::Concrete(t) => f.write_str(t.name().unwrap()),
             TypeType::List(ref i) => write!(f, "[{}]", i),
             TypeType::NonNull(ref i) => write!(f, "{}!", i),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    #[cfg(feature = "graphql-parser-integration")]
+    mod graphql_parser_integration {
+        use crate as juniper;
+        use crate::{EmptyMutation, EmptySubscription};
+
+        #[test]
+        fn graphql_parser_doc() {
+            struct Query;
+            #[juniper::graphql_object]
+            impl Query {
+                fn blah() -> bool {
+                    true
+                }
+            };
+            let schema = crate::RootNode::new(
+                Query,
+                EmptyMutation::<()>::new(),
+                EmptySubscription::<()>::new(),
+            );
+            let ast = graphql_parser::parse_schema::<&str>(
+                r#"
+                type Query {
+                  blah: Boolean!
+                }
+
+                schema {
+                  query: Query
+                }
+            "#,
+            )
+            .unwrap();
+            assert_eq!(
+                format!("{}", ast),
+                format!("{}", schema.as_parser_document()),
+            );
+        }
+    }
+
+    #[cfg(feature = "schema-language")]
+    mod schema_language {
+        use crate as juniper;
+        use crate::{
+            EmptyMutation, EmptySubscription, GraphQLEnum, GraphQLInputObject, GraphQLObject,
+            GraphQLUnion,
+        };
+
+        #[test]
+        fn schema_language() {
+            #[derive(GraphQLObject, Default)]
+            struct Cake {
+                fresh: bool,
+            };
+            #[derive(GraphQLObject, Default)]
+            struct IceCream {
+                cold: bool,
+            };
+            #[derive(GraphQLUnion)]
+            enum GlutenFree {
+                Cake(Cake),
+                IceCream(IceCream),
+            }
+            #[derive(GraphQLEnum)]
+            enum Fruit {
+                Apple,
+                Orange,
+            }
+            #[derive(GraphQLInputObject)]
+            struct Coordinate {
+                latitude: f64,
+                longitude: f64,
+            }
+            struct Query;
+            #[juniper::graphql_object]
+            impl Query {
+                fn blah() -> bool {
+                    true
+                }
+                /// This is whatever's description.
+                fn whatever() -> String {
+                    "foo".to_string()
+                }
+                fn arr(stuff: Vec<Coordinate>) -> Option<&str> {
+                    if stuff.is_empty() {
+                        None
+                    } else {
+                        Some("stuff")
+                    }
+                }
+                fn fruit() -> Fruit {
+                    Fruit::Apple
+                }
+                fn gluten_free(flavor: String) -> GlutenFree {
+                    if flavor == "savory" {
+                        GlutenFree::Cake(Cake::default())
+                    } else {
+                        GlutenFree::IceCream(IceCream::default())
+                    }
+                }
+                #[deprecated]
+                fn old() -> i32 {
+                    42
+                }
+                #[deprecated(note = "This field is deprecated, use another.")]
+                fn really_old() -> f64 {
+                    42.0
+                }
+            };
+
+            let schema = crate::RootNode::new(
+                Query,
+                EmptyMutation::<()>::new(),
+                EmptySubscription::<()>::new(),
+            );
+            let ast = graphql_parser::parse_schema::<&str>(
+                r#"
+                union GlutenFree = Cake | IceCream
+                enum Fruit {
+                    APPLE
+                    ORANGE
+                }
+                type Cake {
+                    fresh: Boolean!
+                }
+                type IceCream {
+                    cold: Boolean!
+                }
+                type Query {
+                  blah: Boolean!
+                  "This is whatever's description."
+                  whatever: String!
+                  arr(stuff: [Coordinate!]!): String
+                  fruit: Fruit!
+                  glutenFree(flavor: String!): GlutenFree!
+                  old: Int! @deprecated
+                  reallyOld: Float! @deprecated(reason: "This field is deprecated, use another.")
+                }
+                input Coordinate {
+                    latitude: Float!
+                    longitude: Float!
+                }
+                schema {
+                  query: Query
+                }
+            "#,
+            )
+            .unwrap();
+            assert_eq!(format!("{}", ast), schema.as_schema_language());
         }
     }
 }

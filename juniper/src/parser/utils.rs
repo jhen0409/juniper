@@ -31,43 +31,40 @@ impl<T> Spanning<T> {
     #[doc(hidden)]
     pub fn zero_width(pos: &SourcePosition, item: T) -> Spanning<T> {
         Spanning {
-            item: item,
-            start: pos.clone(),
-            end: pos.clone(),
+            item,
+            start: *pos,
+            end: *pos,
         }
     }
 
     #[doc(hidden)]
     pub fn single_width(pos: &SourcePosition, item: T) -> Spanning<T> {
-        let mut end = pos.clone();
+        let mut end = *pos;
         end.advance_col();
 
         Spanning {
-            item: item,
-            start: pos.clone(),
-            end: end,
+            item,
+            start: *pos,
+            end,
         }
     }
 
     #[doc(hidden)]
     pub fn start_end(start: &SourcePosition, end: &SourcePosition, item: T) -> Spanning<T> {
         Spanning {
-            item: item,
-            start: start.clone(),
-            end: end.clone(),
+            item,
+            start: *start,
+            end: *end,
         }
     }
 
     #[doc(hidden)]
     pub fn spanning(v: Vec<Spanning<T>>) -> Option<Spanning<Vec<Spanning<T>>>> {
-        if let (Some(start), Some(end)) = (
-            v.first().map(|s| s.start.clone()),
-            v.last().map(|s| s.end.clone()),
-        ) {
+        if let (Some(start), Some(end)) = (v.first().map(|s| s.start), v.last().map(|s| s.end)) {
             Some(Spanning {
                 item: v,
-                start: start,
-                end: end,
+                start,
+                end,
             })
         } else {
             None
@@ -77,7 +74,7 @@ impl<T> Spanning<T> {
     #[doc(hidden)]
     pub fn unlocated(item: T) -> Spanning<T> {
         Spanning {
-            item: item,
+            item,
             start: SourcePosition::new_origin(),
             end: SourcePosition::new_origin(),
         }
@@ -87,22 +84,26 @@ impl<T> Spanning<T> {
     pub fn map<O: fmt::Debug, F: Fn(T) -> O>(self, f: F) -> Spanning<O> {
         Spanning {
             item: f(self.item),
-            start: self.start.clone(),
-            end: self.end.clone(),
+            start: self.start,
+            end: self.end,
         }
     }
 }
+
+impl<T: fmt::Display> fmt::Display for Spanning<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}. At {}", self.item, self.start)
+    }
+}
+
+impl<T: std::error::Error> std::error::Error for Spanning<T> {}
 
 impl SourcePosition {
     #[doc(hidden)]
     pub fn new(index: usize, line: usize, col: usize) -> SourcePosition {
         assert!(index >= line + col);
 
-        SourcePosition {
-            index: index,
-            line: line,
-            col: col,
-        }
+        SourcePosition { index, line, col }
     }
 
     #[doc(hidden)]
@@ -147,5 +148,11 @@ impl SourcePosition {
     /// Zero-based index: the first column is column zero.
     pub fn column(&self) -> usize {
         self.col
+    }
+}
+
+impl fmt::Display for SourcePosition {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.line, self.col)
     }
 }

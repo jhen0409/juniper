@@ -1,7 +1,9 @@
 mod interface {
-    use schema::model::RootNode;
-    use types::scalars::EmptyMutation;
-    use value::Value;
+    use crate::{
+        schema::model::RootNode,
+        types::scalars::{EmptyMutation, EmptySubscription},
+        value::Value,
+    };
 
     trait Pet {
         fn name(&self) -> &str;
@@ -14,7 +16,7 @@ mod interface {
         }
     }
 
-    graphql_interface!(<'a> &'a Pet: () as "Pet" |&self| {
+    graphql_interface!(<'a> &'a dyn Pet: () as "Pet" |&self| {
         field name() -> &str { self.name() }
 
         instance_resolvers: |&_| {
@@ -37,12 +39,17 @@ mod interface {
         }
     }
 
-    graphql_object!(Dog: () |&self| {
-        field name() -> &str { &self.name }
-        field woofs() -> bool { self.woofs }
-
-        interfaces: [&Pet]
-    });
+    #[crate::graphql_object(
+        interfaces = [&dyn Pet]
+    )]
+    impl Dog {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn woofs(&self) -> bool {
+            self.woofs
+        }
+    }
 
     struct Cat {
         name: String,
@@ -58,25 +65,31 @@ mod interface {
         }
     }
 
-    graphql_object!(Cat: () |&self| {
-        field name() -> &str { &self.name }
-        field meows() -> bool { self.meows }
-
-        interfaces: [&Pet]
-    });
-
-    struct Schema {
-        pets: Vec<Box<Pet>>,
+    #[crate::graphql_object(
+        interfaces = [&dyn Pet]
+    )]
+    impl Cat {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn meows(&self) -> bool {
+            self.meows
+        }
     }
 
-    graphql_object!(Schema: () |&self| {
-        field pets() -> Vec<&Pet> {
+    struct Schema {
+        pets: Vec<Box<dyn Pet>>,
+    }
+
+    #[crate::graphql_object]
+    impl Schema {
+        fn pets(&self) -> Vec<&dyn Pet> {
             self.pets.iter().map(|p| p.as_ref()).collect()
         }
-    });
+    }
 
-    #[test]
-    fn test() {
+    #[tokio::test]
+    async fn test() {
         let schema = RootNode::new(
             Schema {
                 pets: vec![
@@ -91,6 +104,7 @@ mod interface {
                 ],
             },
             EmptyMutation::<()>::new(),
+            EmptySubscription::<()>::new(),
         );
         let doc = r"
           {
@@ -107,7 +121,9 @@ mod interface {
 
         let vars = vec![].into_iter().collect();
 
-        let (result, errs) = ::execute(doc, None, &schema, &vars, &()).expect("Execution failed");
+        let (result, errs) = crate::execute(doc, None, &schema, &vars, &())
+            .await
+            .expect("Execution failed");
 
         assert_eq!(errs, []);
 
@@ -145,10 +161,13 @@ mod interface {
 }
 
 mod union {
-    use schema::model::RootNode;
-    use types::scalars::EmptyMutation;
-    use value::Value;
+    use crate::{
+        schema::model::RootNode,
+        types::scalars::{EmptyMutation, EmptySubscription},
+        value::Value,
+    };
 
+    #[crate::graphql_union]
     trait Pet {
         fn as_dog(&self) -> Option<&Dog> {
             None
@@ -157,13 +176,6 @@ mod union {
             None
         }
     }
-
-    graphql_union!(<'a> &'a Pet: () as "Pet" |&self| {
-        instance_resolvers: |&_| {
-            &Dog => self.as_dog(),
-            &Cat => self.as_cat(),
-        }
-    });
 
     struct Dog {
         name: String,
@@ -176,10 +188,15 @@ mod union {
         }
     }
 
-    graphql_object!(Dog: () |&self| {
-        field name() -> &str { &self.name }
-        field woofs() -> bool { self.woofs }
-    });
+    #[crate::graphql_object]
+    impl Dog {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn woofs(&self) -> bool {
+            self.woofs
+        }
+    }
 
     struct Cat {
         name: String,
@@ -192,23 +209,29 @@ mod union {
         }
     }
 
-    graphql_object!(Cat: () |&self| {
-        field name() -> &str { &self.name }
-        field meows() -> bool { self.meows }
-    });
-
-    struct Schema {
-        pets: Vec<Box<Pet>>,
+    #[crate::graphql_object]
+    impl Cat {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn meows(&self) -> bool {
+            self.meows
+        }
     }
 
-    graphql_object!(Schema: () |&self| {
-        field pets() -> Vec<&Pet> {
+    struct Schema {
+        pets: Vec<Box<dyn Pet>>,
+    }
+
+    #[crate::graphql_object]
+    impl Schema {
+        fn pets(&self) -> Vec<&dyn Pet> {
             self.pets.iter().map(|p| p.as_ref()).collect()
         }
-    });
+    }
 
-    #[test]
-    fn test() {
+    #[tokio::test]
+    async fn test_unions() {
         let schema = RootNode::new(
             Schema {
                 pets: vec![
@@ -223,6 +246,7 @@ mod union {
                 ],
             },
             EmptyMutation::<()>::new(),
+            EmptySubscription::<()>::new(),
         );
         let doc = r"
           {
@@ -241,7 +265,9 @@ mod union {
 
         let vars = vec![].into_iter().collect();
 
-        let (result, errs) = ::execute(doc, None, &schema, &vars, &()).expect("Execution failed");
+        let (result, errs) = crate::execute(doc, None, &schema, &vars, &())
+            .await
+            .expect("Execution failed");
 
         assert_eq!(errs, []);
 

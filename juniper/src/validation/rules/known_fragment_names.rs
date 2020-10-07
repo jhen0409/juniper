@@ -1,7 +1,9 @@
-use ast::FragmentSpread;
-use parser::Spanning;
-use validation::{ValidatorContext, Visitor};
-use value::ScalarValue;
+use crate::{
+    ast::FragmentSpread,
+    parser::Spanning,
+    validation::{ValidatorContext, Visitor},
+    value::ScalarValue,
+};
 
 pub struct KnownFragmentNames;
 
@@ -20,10 +22,7 @@ where
     ) {
         let spread_name = &spread.item.name;
         if !context.is_known_fragment(spread_name.item) {
-            context.report_error(
-                &error_message(spread_name.item),
-                &[spread_name.start.clone()],
-            );
+            context.report_error(&error_message(spread_name.item), &[spread_name.start]);
         }
     }
 }
@@ -36,9 +35,11 @@ fn error_message(frag_name: &str) -> String {
 mod tests {
     use super::{error_message, factory};
 
-    use parser::SourcePosition;
-    use validation::{expect_fails_rule, expect_passes_rule, RuleError};
-    use value::DefaultScalarValue;
+    use crate::{
+        parser::SourcePosition,
+        validation::{expect_fails_rule, expect_passes_rule, RuleError},
+        value::DefaultScalarValue,
+    };
 
     #[test]
     fn known() {

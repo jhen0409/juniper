@@ -1,27 +1,33 @@
-use ast::{
-    Arguments, Definition, Document, Field, InputValue, Operation, OperationType, Selection,
+use crate::{
+    ast::{
+        Arguments, Definition, Document, Field, InputValue, Operation, OperationType, Selection,
+    },
+    parser::{document::parse_document_source, ParseError, SourcePosition, Spanning, Token},
+    schema::model::SchemaType,
+    types::scalars::{EmptyMutation, EmptySubscription},
+    validation::test_harness::{MutationRoot, QueryRoot, SubscriptionRoot},
+    value::{DefaultScalarValue, ScalarValue},
 };
-use parser::document::parse_document_source;
-use parser::{ParseError, SourcePosition, Spanning, Token};
-use schema::model::SchemaType;
-use validation::test_harness::{MutationRoot, QueryRoot};
-use value::{DefaultScalarValue, ScalarRefValue, ScalarValue};
 
 fn parse_document<S>(s: &str) -> Document<S>
 where
     S: ScalarValue,
-    for<'b> &'b S: ScalarRefValue<'b>,
 {
-    parse_document_source(s, &SchemaType::new::<QueryRoot, MutationRoot>(&(), &()))
-        .expect(&format!("Parse error on input {:#?}", s))
+    parse_document_source(
+        s,
+        &SchemaType::new::<QueryRoot, MutationRoot, SubscriptionRoot>(&(), &(), &()),
+    )
+    .expect(&format!("Parse error on input {:#?}", s))
 }
 
 fn parse_document_error<'a, S>(s: &'a str) -> Spanning<ParseError<'a>>
 where
     S: ScalarValue,
-    for<'b> &'b S: ScalarRefValue<'b>,
 {
-    match parse_document_source::<S>(s, &SchemaType::new::<QueryRoot, MutationRoot>(&(), &())) {
+    match parse_document_source::<S>(
+        s,
+        &SchemaType::new::<QueryRoot, MutationRoot, SubscriptionRoot>(&(), &(), &()),
+    ) {
         Ok(doc) => panic!("*No* parse error on input {:#?} =>\n{:#?}", s, doc),
         Err(err) => err,
     }
@@ -142,5 +148,29 @@ fn errors() {
             &SourcePosition::new(9, 0, 9),
             ParseError::UnexpectedToken(Token::CurlyClose)
         )
+    );
+}
+
+#[test]
+fn issue_427_panic_is_not_expected() {
+    struct QueryWithoutFloat;
+
+    #[crate::graphql_object]
+    impl QueryWithoutFloat {
+        fn echo(value: String) -> String {
+            value
+        }
+    }
+
+    let schema = SchemaType::new::<QueryWithoutFloat, EmptyMutation<()>, EmptySubscription<()>>(
+        &(),
+        &(),
+        &(),
+    );
+    let parse_result = parse_document_source(r##"{ echo(value: 123.0) }"##, &schema);
+
+    assert_eq!(
+        parse_result.unwrap_err().item,
+        ParseError::ExpectedScalarError("There needs to be a Float type")
     );
 }

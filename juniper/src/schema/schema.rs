@@ -1,42 +1,62 @@
-use ast::Selection;
-use executor::{ExecutionResult, Executor, Registry};
-use types::base::{Arguments, GraphQLType, TypeKind};
-use value::{ScalarRefValue, ScalarValue, Value};
-
-use schema::meta::{
-    Argument, EnumMeta, EnumValue, Field, InputObjectMeta, InterfaceMeta, MetaType, ObjectMeta,
-    UnionMeta,
+use crate::{
+    ast::Selection,
+    executor::{ExecutionResult, Executor, Registry},
+    types::{
+        async_await::{GraphQLTypeAsync, GraphQLValueAsync},
+        base::{Arguments, GraphQLType, GraphQLValue, TypeKind},
+    },
+    value::{ScalarValue, Value},
 };
-use schema::model::{DirectiveLocation, DirectiveType, RootNode, SchemaType, TypeType};
 
-impl<'a, CtxT, S, QueryT, MutationT> GraphQLType<S> for RootNode<'a, QueryT, MutationT, S>
+use crate::schema::{
+    meta::{
+        Argument, EnumMeta, EnumValue, Field, InputObjectMeta, InterfaceMeta, MetaType, ObjectMeta,
+        UnionMeta,
+    },
+    model::{DirectiveLocation, DirectiveType, RootNode, SchemaType, TypeType},
+};
+
+impl<'a, S, QueryT, MutationT, SubscriptionT> GraphQLType<S>
+    for RootNode<'a, QueryT, MutationT, SubscriptionT, S>
 where
     S: ScalarValue,
-    QueryT: GraphQLType<S, Context = CtxT>,
-    MutationT: GraphQLType<S, Context = CtxT>,
-    for<'b> &'b S: ScalarRefValue<'b>,
+    QueryT: GraphQLType<S>,
+    MutationT: GraphQLType<S, Context = QueryT::Context>,
+    SubscriptionT: GraphQLType<S, Context = QueryT::Context>,
 {
-    type Context = CtxT;
-    type TypeInfo = QueryT::TypeInfo;
-
-    fn name(info: &QueryT::TypeInfo) -> Option<&str> {
+    fn name(info: &Self::TypeInfo) -> Option<&str> {
         QueryT::name(info)
     }
 
-    fn meta<'r>(info: &QueryT::TypeInfo, registry: &mut Registry<'r, S>) -> MetaType<'r, S>
+    fn meta<'r>(info: &Self::TypeInfo, registry: &mut Registry<'r, S>) -> MetaType<'r, S>
     where
         S: 'r,
-        for<'b> &'b S: ScalarRefValue<'b>,
     {
         QueryT::meta(info, registry)
+    }
+}
+
+impl<'a, S, QueryT, MutationT, SubscriptionT> GraphQLValue<S>
+    for RootNode<'a, QueryT, MutationT, SubscriptionT, S>
+where
+    S: ScalarValue,
+    QueryT: GraphQLType<S>,
+    MutationT: GraphQLType<S, Context = QueryT::Context>,
+    SubscriptionT: GraphQLType<S, Context = QueryT::Context>,
+{
+    type Context = QueryT::Context;
+    type TypeInfo = QueryT::TypeInfo;
+
+    fn type_name<'i>(&self, info: &'i Self::TypeInfo) -> Option<&'i str> {
+        QueryT::name(info)
     }
 
     fn resolve_field(
         &self,
-        info: &QueryT::TypeInfo,
+        info: &Self::TypeInfo,
         field: &str,
         args: &Arguments<S>,
-        executor: &Executor<CtxT, S>,
+        executor: &Executor<Self::Context, S>,
     ) -> ExecutionResult<S> {
         match field {
             "__schema" => executor
@@ -57,68 +77,124 @@ where
         info: &Self::TypeInfo,
         selection_set: Option<&[Selection<S>]>,
         executor: &Executor<Self::Context, S>,
-    ) -> Value<S> {
-        use types::base::resolve_selection_set_into;
-        use value::Object;
+    ) -> ExecutionResult<S> {
+        use crate::{types::base::resolve_selection_set_into, value::Object};
         if let Some(selection_set) = selection_set {
             let mut result = Object::with_capacity(selection_set.len());
             if resolve_selection_set_into(self, info, selection_set, executor, &mut result) {
-                Value::Object(result)
+                Ok(Value::Object(result))
             } else {
-                Value::null()
+                Ok(Value::null())
             }
         } else {
+            // TODO: this panic seems useless, investigate why it is here.
             panic!("resolve() must be implemented by non-object output types");
         }
     }
 }
 
-graphql_object!(<'a> SchemaType<'a, S>: SchemaType<'a, S> as "__Schema"
-    where Scalar = <S: 'a> |&self|
+impl<'a, S, QueryT, MutationT, SubscriptionT> GraphQLValueAsync<S>
+    for RootNode<'a, QueryT, MutationT, SubscriptionT, S>
+where
+    QueryT: GraphQLTypeAsync<S>,
+    QueryT::TypeInfo: Sync,
+    QueryT::Context: Sync + 'a,
+    MutationT: GraphQLTypeAsync<S, Context = QueryT::Context>,
+    MutationT::TypeInfo: Sync,
+    SubscriptionT: GraphQLType<S, Context = QueryT::Context> + Sync,
+    SubscriptionT::TypeInfo: Sync,
+    S: ScalarValue + Send + Sync,
 {
-    field types() -> Vec<TypeType<S>> {
+    fn resolve_field_async<'b>(
+        &'b self,
+        info: &'b Self::TypeInfo,
+        field_name: &'b str,
+        arguments: &'b Arguments<S>,
+        executor: &'b Executor<Self::Context, S>,
+    ) -> crate::BoxFuture<'b, ExecutionResult<S>> {
+        use futures::future::ready;
+        match field_name {
+            "__schema" | "__type" => {
+                let v = self.resolve_field(info, field_name, arguments, executor);
+                Box::pin(ready(v))
+            }
+            _ => self
+                .query_type
+                .resolve_field_async(info, field_name, arguments, executor),
+        }
+    }
+}
+
+#[crate::graphql_object(
+    name = "__Schema"
+    Context = SchemaType<'a, S>,
+    Scalar = S,
+    internal,
+    // FIXME: make this redundant.
+    noasync,
+)]
+impl<'a, S> SchemaType<'a, S>
+where
+    S: crate::ScalarValue + 'a,
+{
+    fn types(&self) -> Vec<TypeType<S>> {
         self.type_list()
             .into_iter()
-            .filter(|t| t.to_concrete().map(|t| t.name() != Some("_EmptyMutation")).unwrap_or(false))
-            .collect()
+            .filter(|t| {
+                t.to_concrete()
+                    .map(|t| {
+                        !(t.name() == Some("_EmptyMutation")
+                            || t.name() == Some("_EmptySubscription"))
+                    })
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>()
     }
 
-    field query_type() -> TypeType<S> {
+    fn query_type(&self) -> TypeType<S> {
         self.query_type()
     }
 
-    field mutation_type() -> Option<TypeType<S>> {
+    fn mutation_type(&self) -> Option<TypeType<S>> {
         self.mutation_type()
     }
 
-    // Included for compatibility with the introspection query in GraphQL.js
-    field subscription_type() -> Option<TypeType<S>> {
-        None
+    fn subscription_type(&self) -> Option<TypeType<S>> {
+        self.subscription_type()
     }
 
-    field directives() -> Vec<&DirectiveType<S>> {
+    fn directives(&self) -> Vec<&DirectiveType<S>> {
         self.directive_list()
     }
-});
+}
 
-graphql_object!(<'a> TypeType<'a, S>: SchemaType<'a, S> as "__Type"
-    where Scalar = <S: 'a> |&self|
+#[crate::graphql_object(
+    name = "__Type"
+    Context = SchemaType<'a, S>,
+    Scalar = S,
+    internal,
+    // FIXME: make this redundant.
+    noasync,
+)]
+impl<'a, S> TypeType<'a, S>
+where
+    S: crate::ScalarValue + 'a,
 {
-    field name() -> Option<&str> {
+    fn name(&self) -> Option<&str> {
         match *self {
             TypeType::Concrete(t) => t.name(),
             _ => None,
         }
     }
 
-    field description() -> Option<&String> {
+    fn description(&self) -> Option<&String> {
         match *self {
             TypeType::Concrete(t) => t.description(),
             _ => None,
         }
     }
 
-    field kind() -> TypeKind {
+    fn kind(&self) -> TypeKind {
         match *self {
             TypeType::Concrete(t) => t.type_kind(),
             TypeType::List(_) => TypeKind::List,
@@ -126,190 +202,250 @@ graphql_object!(<'a> TypeType<'a, S>: SchemaType<'a, S> as "__Type"
         }
     }
 
-    field fields(include_deprecated = false: bool) -> Option<Vec<&Field<S>>> {
+    #[graphql(arguments(include_deprecated(default = false)))]
+    fn fields(&self, include_deprecated: bool) -> Option<Vec<&Field<S>>> {
         match *self {
-            TypeType::Concrete(&MetaType::Interface(InterfaceMeta { ref fields, .. })) |
-            TypeType::Concrete(&MetaType::Object(ObjectMeta { ref fields, .. })) =>
-                Some(fields
+            TypeType::Concrete(&MetaType::Interface(InterfaceMeta { ref fields, .. }))
+            | TypeType::Concrete(&MetaType::Object(ObjectMeta { ref fields, .. })) => Some(
+                fields
                     .iter()
                     .filter(|f| include_deprecated || !f.deprecation_status.is_deprecated())
                     .filter(|f| !f.name.starts_with("__"))
-                    .collect()),
+                    .collect(),
+            ),
             _ => None,
         }
     }
 
-    field of_type() -> Option<&Box<TypeType<S>>> {
+    fn of_type(&self) -> Option<&Box<TypeType<S>>> {
         match *self {
             TypeType::Concrete(_) => None,
             TypeType::List(ref l) | TypeType::NonNull(ref l) => Some(l),
         }
     }
 
-    field input_fields() -> Option<&Vec<Argument<S>>> {
+    fn input_fields(&self) -> Option<&Vec<Argument<S>>> {
         match *self {
-            TypeType::Concrete(&MetaType::InputObject(InputObjectMeta { ref input_fields, .. })) =>
-                Some(input_fields),
+            TypeType::Concrete(&MetaType::InputObject(InputObjectMeta {
+                ref input_fields,
+                ..
+            })) => Some(input_fields),
             _ => None,
         }
     }
 
-    field interfaces(&executor) -> Option<Vec<TypeType<S>>> {
+    fn interfaces(&self, schema: &SchemaType<'a, S>) -> Option<Vec<TypeType<S>>> {
         match *self {
-            TypeType::Concrete(&MetaType::Object(ObjectMeta { ref interface_names, .. })) => {
-                let schema = executor.context();
-                Some(interface_names
+            TypeType::Concrete(&MetaType::Object(ObjectMeta {
+                ref interface_names,
+                ..
+            })) => Some(
+                interface_names
                     .iter()
                     .filter_map(|n| schema.type_by_name(n))
-                    .collect())
-            }
+                    .collect(),
+            ),
             _ => None,
         }
     }
 
-    field possible_types(&executor) -> Option<Vec<TypeType<S>>> {
-        let schema = executor.context();
+    fn possible_types(&self, schema: &SchemaType<'a, S>) -> Option<Vec<TypeType<S>>> {
         match *self {
-            TypeType::Concrete(&MetaType::Union(UnionMeta { ref of_type_names, .. })) => {
-                Some(of_type_names
+            TypeType::Concrete(&MetaType::Union(UnionMeta {
+                ref of_type_names, ..
+            })) => Some(
+                of_type_names
                     .iter()
                     .filter_map(|tn| schema.type_by_name(tn))
-                    .collect())
-            }
-            TypeType::Concrete(&MetaType::Interface(InterfaceMeta{name: ref iface_name, .. })) => {
-                Some(schema.concrete_type_list()
+                    .collect(),
+            ),
+            TypeType::Concrete(&MetaType::Interface(InterfaceMeta {
+                name: ref iface_name,
+                ..
+            })) => Some(
+                schema
+                    .concrete_type_list()
                     .iter()
-                    .filter_map(|&ct|
-                        if let MetaType::Object(ObjectMeta{
+                    .filter_map(|&ct| {
+                        if let MetaType::Object(ObjectMeta {
                             ref name,
                             ref interface_names,
                             ..
-                        }) = *ct {
+                        }) = *ct
+                        {
                             if interface_names.contains(&iface_name.to_string()) {
                                 schema.type_by_name(name)
-                            } else { None }
-                        } else { None }
-                    )
-                    .collect())
-            }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            ),
             _ => None,
         }
     }
 
-    field enum_values(include_deprecated = false: bool) -> Option<Vec<&EnumValue>> {
+    #[graphql(arguments(include_deprecated(default = false)))]
+    fn enum_values(&self, include_deprecated: bool) -> Option<Vec<&EnumValue>> {
         match *self {
-            TypeType::Concrete(&MetaType::Enum(EnumMeta { ref values, .. })) =>
-                Some(values
+            TypeType::Concrete(&MetaType::Enum(EnumMeta { ref values, .. })) => Some(
+                values
                     .iter()
                     .filter(|f| include_deprecated || !f.deprecation_status.is_deprecated())
-                    .collect()),
+                    .collect(),
+            ),
             _ => None,
         }
     }
-});
+}
 
-graphql_object!(<'a> Field<'a, S>: SchemaType<'a, S> as "__Field"
-    where Scalar = <S: 'a> |&self|
+#[crate::graphql_object(
+    name = "__Field",
+    Context = SchemaType<'a, S>,
+    Scalar = S,
+    internal,
+    // FIXME: make this redundant.
+    noasync,
+)]
+impl<'a, S> Field<'a, S>
+where
+    S: crate::ScalarValue + 'a,
 {
-    field name() -> &String {
+    fn name(&self) -> &String {
         &self.name
     }
 
-    field description() -> &Option<String> {
+    fn description(&self) -> &Option<String> {
         &self.description
     }
 
-    field args() -> Vec<&Argument<S>> {
-        self.arguments.as_ref().map_or_else(Vec::new, |v| v.iter().collect())
+    fn args(&self) -> Vec<&Argument<S>> {
+        self.arguments
+            .as_ref()
+            .map_or_else(Vec::new, |v| v.iter().collect())
     }
 
-    field type(&executor) -> TypeType<S> {
-        executor.context().make_type(&self.field_type)
+    #[graphql(name = "type")]
+    fn _type(&self, context: &SchemaType<'a, S>) -> TypeType<S> {
+        context.make_type(&self.field_type)
     }
 
-    field is_deprecated() -> bool {
+    fn is_deprecated(&self) -> bool {
         self.deprecation_status.is_deprecated()
     }
 
-    field deprecation_reason() -> Option<&String> {
+    fn deprecation_reason(&self) -> Option<&String> {
         self.deprecation_status.reason()
     }
-});
+}
 
-graphql_object!(<'a> Argument<'a, S>: SchemaType<'a, S> as "__InputValue"
-    where Scalar = <S: 'a> |&self|
+#[crate::graphql_object(
+    name = "__InputValue",
+    Context = SchemaType<'a, S>,
+    Scalar = S,
+    internal,
+    // FIXME: make this redundant.
+    noasync,
+)]
+impl<'a, S> Argument<'a, S>
+where
+    S: crate::ScalarValue + 'a,
 {
-    field name() -> &String {
+    fn name(&self) -> &String {
         &self.name
     }
 
-    field description() -> &Option<String> {
+    fn description(&self) -> &Option<String> {
         &self.description
     }
 
-    field type(&executor) -> TypeType<S> {
-        executor.context().make_type(&self.arg_type)
+    #[graphql(name = "type")]
+    fn _type(&self, context: &SchemaType<'a, S>) -> TypeType<S> {
+        context.make_type(&self.arg_type)
     }
 
-    field default_value() -> Option<String> {
+    fn default_value(&self) -> Option<String> {
         self.default_value.as_ref().map(|v| format!("{}", v))
     }
-});
+}
 
-graphql_object!(EnumValue: () as "__EnumValue" where Scalar = <S> |&self| {
-    field name() -> &String {
+#[crate::graphql_object(
+    name = "__EnumValue",
+    Scalar = S,
+    internal,
+    // FIXME: make this redundant.
+    noasync,
+)]
+impl<'a, S> EnumValue
+where
+    S: crate::ScalarValue + 'a,
+{
+    fn name(&self) -> &String {
         &self.name
     }
 
-    field description() -> &Option<String> {
+    fn description(&self) -> &Option<String> {
         &self.description
     }
 
-    field is_deprecated() -> bool {
+    fn is_deprecated(&self) -> bool {
         self.deprecation_status.is_deprecated()
     }
 
-    field deprecation_reason() -> Option<&String> {
+    fn deprecation_reason(&self) -> Option<&String> {
         self.deprecation_status.reason()
     }
-});
+}
 
-graphql_object!(<'a> DirectiveType<'a, S>: SchemaType<'a, S> as "__Directive"
-    where Scalar = <S: 'a> |&self|
+#[crate::graphql_object(
+    name = "__Directive",
+    Context = SchemaType<'a, S>,
+    Scalar = S,
+    internal,
+    // FIXME: make this redundant.
+    noasync,
+)]
+impl<'a, S> DirectiveType<'a, S>
+where
+    S: crate::ScalarValue + 'a,
 {
-   field name() -> &String {
+    fn name(&self) -> &String {
         &self.name
     }
 
-    field description() -> &Option<String> {
+    fn description(&self) -> &Option<String> {
         &self.description
     }
 
-    field locations() -> &Vec<DirectiveLocation> {
+    fn locations(&self) -> &Vec<DirectiveLocation> {
         &self.locations
     }
 
-    field args() -> &Vec<Argument<S>> {
+    fn args(&self) -> &Vec<Argument<S>> {
         &self.arguments
     }
 
     // Included for compatibility with the introspection query in GraphQL.js
-    field deprecated "Use the locations array instead"
-    on_operation() -> bool {
+    #[graphql(deprecated = "Use the locations array instead")]
+    fn on_operation(&self) -> bool {
         self.locations.contains(&DirectiveLocation::Query)
     }
 
     // Included for compatibility with the introspection query in GraphQL.js
-    field deprecated "Use the locations array instead"
-    on_fragment() -> bool {
-        self.locations.contains(&DirectiveLocation::FragmentDefinition) ||
-            self.locations.contains(&DirectiveLocation::InlineFragment) ||
-            self.locations.contains(&DirectiveLocation::FragmentSpread)
+    #[graphql(deprecated = "Use the locations array instead")]
+    fn on_fragment(&self) -> bool {
+        self.locations
+            .contains(&DirectiveLocation::FragmentDefinition)
+            || self.locations.contains(&DirectiveLocation::InlineFragment)
+            || self.locations.contains(&DirectiveLocation::FragmentSpread)
     }
 
     // Included for compatibility with the introspection query in GraphQL.js
-    field deprecated "Use the locations array instead"
-    on_field() -> bool {
+    #[graphql(deprecated = "Use the locations array instead")]
+    fn on_field(&self) -> bool {
         self.locations.contains(&DirectiveLocation::Field)
     }
-});
+}

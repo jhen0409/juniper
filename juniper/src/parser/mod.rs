@@ -1,4 +1,5 @@
 //! Query parser and language utilities
+#![allow(clippy::module_inception)]
 
 mod document;
 mod lexer;
@@ -11,6 +12,8 @@ mod tests;
 
 pub use self::document::parse_document_source;
 
-pub use self::lexer::{Lexer, LexerError, ScalarToken, Token};
-pub use self::parser::{OptionParseResult, ParseError, ParseResult, Parser, UnlocatedParseResult};
-pub use self::utils::{SourcePosition, Spanning};
+pub use self::{
+    lexer::{Lexer, LexerError, ScalarToken, Token},
+    parser::{OptionParseResult, ParseError, ParseResult, Parser, UnlocatedParseResult},
+    utils::{SourcePosition, Spanning},
+};
